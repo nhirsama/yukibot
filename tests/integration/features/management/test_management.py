@@ -44,7 +44,7 @@ async def open_management(path: Path) -> tuple[SqliteDatabase, SqliteManagementR
     database = SqliteDatabase(f"sqlite:///{path}")
     await database.open()
     await MigrationRunner(database, MANAGEMENT_MIGRATIONS).upgrade()
-    return database, SqliteManagementRepository(database)
+    return database, SqliteManagementRepository(database, Owner(999))
 
 
 def test_help_response_cannot_be_recognized_as_an_outgoing_command() -> None:
@@ -123,13 +123,46 @@ async def test_admin_list_returns_owner_and_delegated_admins(tmp_path: Path) -> 
         await database.close()
 
 
-async def test_command_receipts_are_unique_per_chat_and_message(tmp_path: Path) -> None:
+async def test_command_receipts_are_unique_per_account_chat_and_message(tmp_path: Path) -> None:
     database, repository = await open_management(tmp_path / "receipts.db")
+    other_account = SqliteManagementRepository(database, Owner(1000))
     try:
         assert not await repository.is_processed(-1001, 10)
         await repository.mark_processed(-1001, 10)
         await repository.mark_processed(-1001, 10)
         assert await repository.is_processed(-1001, 10)
         assert not await repository.is_processed(-1002, 10)
+        assert not await other_account.is_processed(-1001, 10)
+        await other_account.mark_processed(-1001, 10)
+        assert await other_account.is_processed(-1001, 10)
+    finally:
+        await database.close()
+
+
+async def test_account_scoping_migration_discards_ambiguous_legacy_receipts(
+    tmp_path: Path,
+) -> None:
+    database = SqliteDatabase(f"sqlite:///{tmp_path / 'legacy-receipts.db'}")
+    await database.open()
+    try:
+        await MigrationRunner(database, MANAGEMENT_MIGRATIONS[:1]).upgrade()
+        await database.execute(
+            "INSERT INTO management_command_receipts (chat_id, message_id) VALUES (?, ?)",
+            (-1001, 10),
+        )
+
+        assert await MigrationRunner(database, MANAGEMENT_MIGRATIONS).upgrade() == (
+            ("management", 2),
+        )
+        columns = await database.fetch_all("PRAGMA table_info(management_command_receipts)")
+        repository = SqliteManagementRepository(database, Owner(999))
+
+        assert [row["name"] for row in columns] == [
+            "account_id",
+            "chat_id",
+            "message_id",
+            "processed_at",
+        ]
+        assert not await repository.is_processed(-1001, 10)
     finally:
         await database.close()

@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from yukibot.contracts import Database, Row
 
+from .ports import OwnerIdentity
+
 
 class SqliteManagementRepository:
-    def __init__(self, database: Database) -> None:
+    def __init__(self, database: Database, owner: OwnerIdentity) -> None:
         self._database = database
+        self._owner = owner
 
     async def is_admin(self, user_id: int) -> bool:
         row = await self._database.fetch_one(
@@ -62,20 +65,20 @@ class SqliteManagementRepository:
             """
             SELECT 1 AS found
             FROM management_command_receipts
-            WHERE chat_id = ? AND message_id = ?
+            WHERE account_id = ? AND chat_id = ? AND message_id = ?
             """,
-            (chat_id, message_id),
+            (self._owner.user_id, chat_id, message_id),
         )
         return row is not None
 
     async def mark_processed(self, chat_id: int, message_id: int) -> None:
         await self._database.execute(
             """
-            INSERT INTO management_command_receipts (chat_id, message_id)
-            VALUES (?, ?)
-            ON CONFLICT (chat_id, message_id) DO NOTHING
+            INSERT INTO management_command_receipts (account_id, chat_id, message_id)
+            VALUES (?, ?, ?)
+            ON CONFLICT (account_id, chat_id, message_id) DO NOTHING
             """,
-            (chat_id, message_id),
+            (self._owner.user_id, chat_id, message_id),
         )
 
 

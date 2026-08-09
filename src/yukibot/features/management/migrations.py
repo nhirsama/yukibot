@@ -32,6 +32,25 @@ MANAGEMENT_MIGRATIONS = (
             """,
         ),
     ),
+    Migration(
+        scope="management",
+        version=2,
+        description="scope command receipts to the authenticated Telegram account",
+        statements=(
+            """
+            DROP TABLE management_command_receipts
+            """,
+            """
+            CREATE TABLE management_command_receipts (
+                account_id INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                processed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (account_id, chat_id, message_id)
+            )
+            """,
+        ),
+    ),
 )
 
 __all__ = ["MANAGEMENT_MIGRATIONS"]

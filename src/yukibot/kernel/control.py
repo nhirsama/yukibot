@@ -39,6 +39,7 @@ class CommandResult:
 class CommandDispatch:
     consumed: bool
     response: str | None = None
+    duplicate: bool = False
 
 
 type CommandHandler = Callable[[ControlCommand], Awaitable[CommandResult]]
@@ -161,7 +162,7 @@ class CommandDispatcher:
             if name != "/help" and registration is None:
                 return CommandDispatch(False)
             if await self._receipts.is_processed(chat_id, message_id):
-                return CommandDispatch(True)
+                return CommandDispatch(True, duplicate=True)
             try:
                 response: str | None
                 if not await self._authorizer.is_authorized(command):

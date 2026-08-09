@@ -94,6 +94,7 @@ async def test_dispatches_exact_registered_root_and_deduplicates_receipts() -> N
     assert first.response == "arguments= add 1"
     assert replay.consumed
     assert replay.response is None
+    assert replay.duplicate
     assert [command.raw_arguments for command in calls] == [" add 1"]
     assert receipts.processed == {(-1001, 10)}
 

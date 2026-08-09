@@ -66,6 +66,7 @@ class TelegramCommandRouter:
                 "message_id": message.ref.message_id,
                 "actor_id": message.sender_id,
                 "outgoing": message.outgoing,
+                "duplicate": outcome.duplicate,
                 "has_response": bool(outcome.response),
             },
         )

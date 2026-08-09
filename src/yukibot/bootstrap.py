@@ -98,7 +98,7 @@ def build_runtime(
     telegram_client_lifecycle = TelethonClientLifecycle(client, peers, identity)
     request_limiter = TelegramRequestLimiter()
     command_registry = CommandRegistry()
-    management_repository = SqliteManagementRepository(database)
+    management_repository = SqliteManagementRepository(database, identity)
     telegram_gateway = TelethonGateway(client, peers, request_limiter=request_limiter)
     routes = SqliteRouteRepository(database)
     chat_accesses = SqliteChatAccessRepository(database)
