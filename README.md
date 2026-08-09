@@ -222,3 +222,12 @@ uv run ruff check .
 uv run ruff format --check .
 uv run mypy src
 ```
+
+## License
+
+Copyright (C) 2026 [nhirsama](https://github.com/nhirsama).
+
+Yukibot 源代码采用 [GNU Affero General Public License v3.0 or later](LICENSE)
+（`AGPL-3.0-or-later`）授权。项目源码位于
+[github.com/nhirsama/Yukibot](https://github.com/nhirsama/Yukibot)。第三方依赖和基础镜像组件
+继续适用各自的许可证与版权声明。

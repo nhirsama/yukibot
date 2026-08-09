@@ -3,6 +3,9 @@ name = "yukibot"
 version = "0.1.0"
 description = "Composable Telegram userbot features"
 readme = "README.md"
+authors = [{ name = "nhirsama" }]
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE", "COPYRIGHT"]
 requires-python = ">=3.12"
 dependencies = [
     "aiosqlite>=0.21,<1",
@@ -14,6 +17,10 @@ dependencies = [
 
 [project.scripts]
 yukibot = "yukibot.__main__:main"
+
+[project.urls]
+Repository = "https://github.com/nhirsama/Yukibot"
+Source = "https://github.com/nhirsama/Yukibot"
 
 [build-system]
 requires = ["hatchling"]
