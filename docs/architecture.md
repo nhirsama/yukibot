@@ -88,65 +88,45 @@ features = [
 
 这比目录扫描和 Python entry point 更容易理解、调试和静态检查。只有出现独立发布第三方插件的真实需求时，才引入动态发现机制。
 
-## 5. 推荐目录结构
+## 5. 项目目录结构
 
 ```text
 yukibot/
+├── .github/workflows/ci.yml      # CI 与 GHCR 镜像发布
+├── .env.example
+├── docker/entrypoint.py          # 容器数据目录权限初始化
+├── docker-compose.yml
+├── Dockerfile
+├── README.md
 ├── pyproject.toml
 ├── uv.lock
-├── .env.example
-├── README.md
-├── docs/
-│   └── architecture.md
-├── migrations/
+├── docs/                         # 架构和运维文档
 ├── src/yukibot/
 │   ├── __init__.py
-│   ├── __main__.py
-│   ├── bootstrap.py
-│   ├── config.py
-│   │
-│   ├── kernel/
-│   │   ├── lifecycle.py
-│   │   ├── event_bus.py
-│   │   ├── feature.py
-│   │   └── errors.py
-│   │
-│   ├── contracts/
-│   │   ├── telegram.py
-│   │   ├── database.py
-│   │   └── events.py
-│   │
-│   ├── adapters/
-│   │   ├── telegram/
-│   │   │   ├── client.py
-│   │   │   ├── event_source.py
-│   │   │   └── rate_limit.py
-│   │   ├── database/
-│   │   │   ├── connection.py
-│   │   │   └── migrations.py
-│   │   └── observability/
-│   │       └── logging.py
-│   │
+│   ├── __main__.py               # CLI 程序入口（python -m yukibot）
+│   ├── bootstrap.py              # 依赖组合根
+│   ├── config.py                 # 环境配置
+│   ├── kernel/                   # 生命周期、任务和事件总线
+│   ├── contracts/                # 稳定业务契约
+│   ├── adapters/                 # SQLite、Telethon 和日志适配器
 │   └── features/
-│       └── forwarder/
-│           ├── feature.py
-│           ├── models.py
-│           ├── ports.py
-│           ├── service.py
-│           ├── jobs.py
-│           ├── job_repository.py
-│           ├── repository.py     # 基于 Database 契约的本功能实现
-│           ├── migrations.py
-│           ├── worker.py
-│           └── infrastructure/
-│               └── telethon_gateway.py
+│       ├── forwarder/
+│       ├── management/
+│       └── summarizer/
 └── tests/
-    ├── unit/
+    ├── architecture/
+    ├── contract/
     ├── integration/
-    └── contract/
+    ├── unit/
+    └── ...
 ```
 
-功能包默认保持扁平。只有单个功能明显变大后，才在其内部拆分 `domain/`、`application/` 和 `infrastructure/`，避免为了形式制造目录层级。
+`docker/entrypoint.py` 不属于业务入口。它只在容器启动阶段处理绑定目录权限，随后切换到
+非 root 用户并执行 `src/yukibot/__main__.py` 暴露的 `yukibot` 命令。运行时数据统一放在根目录下
+被 Git 忽略的 `data/` 中。
+
+功能包默认保持扁平。只有单个功能明显变大后，才在其内部拆分 `domain/`、`application/` 和
+`infrastructure/`，避免为了形式制造目录层级。
 
 ## 6. 内核设计
 

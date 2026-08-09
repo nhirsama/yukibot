@@ -27,16 +27,19 @@ from yukibot.adapters.telegram.client import telethon_event_types
 
 def test_stable_telethon_api_matches_adapter(tmp_path: Path) -> None:
     client = create_telethon_client(tmp_path / "contract.session", 1, "hash")
-
-    assert telethon.__version__ == "1.44.0"
-    assert isinstance(client, TelethonClientAdapter)
-    assert isinstance(client.native_client, TelegramClient)
-    assert client.native_client._init_request.device_model == "Yukibot"  # type: ignore[attr-defined]
-    assert telethon_event_types() == (
-        events.NewMessage,
-        events.MessageEdited,
-        events.MessageDeleted,
-    )
+    raw_client = client.native_client
+    try:
+        assert telethon.__version__ == "1.44.0"
+        assert isinstance(client, TelethonClientAdapter)
+        assert isinstance(raw_client, TelegramClient)
+        assert raw_client._init_request.device_model == "Yukibot"  # type: ignore[attr-defined]
+        assert telethon_event_types() == (
+            events.NewMessage,
+            events.MessageEdited,
+            events.MessageDeleted,
+        )
+    finally:
+        raw_client.session.close()  # type: ignore[attr-defined]
 
 
 async def test_stable_adapter_uses_raw_topic_requests() -> None:

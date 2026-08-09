@@ -1,0 +1,21 @@
+services:
+  yukibot:
+    image: ${YUKIBOT_IMAGE:-ghcr.io/nhirsama/yukibot:latest}
+    pull_policy: always
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    stop_grace_period: 60s
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

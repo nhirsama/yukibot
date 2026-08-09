@@ -30,6 +30,38 @@ uv run yukibot
 聊天中发送已注册命令，结果会回复到同一聊天的原消息。命令是普通消息处理之外的带外控制信令，
 不会进入 Forwarder；未注册的 `/xxx` 仍按普通消息处理。
 
+## Docker 部署
+
+`docker-compose.yml` 默认使用 `ghcr.io/nhirsama/yukibot:latest`，并将其同目录下的 `./data`
+挂载到容器的 `/app/data`。应用不需要开放入站端口，但服务器必须能通过 HTTPS 访问 Telegram、
+GHCR 和配置的模型 API。
+
+```bash
+cp .env.example .env
+# 填写 Telegram API ID 和 API hash
+chmod 600 .env
+mkdir -p data
+chmod 700 data
+
+docker compose pull
+docker compose run --rm yukibot
+# 完成交互登录后按 Ctrl+C，再转为后台运行
+docker compose up -d
+docker compose logs -f yukibot
+```
+
+容器启动时只以 root 修正 `./data` 的属主和权限，然后以 UID/GID `10001` 运行应用。
+目录会设为 `0700`，其中的 session、SQLite 和备份文件会设为 `0600`；宿主机上看到这些文件
+属于 UID `10001` 是预期行为。不要在 Compose 中覆盖 `user`，否则入口无法修复新建绑定目录的权限。
+
+升级使用 `docker compose pull && docker compose up -d`。该项目只能运行一个实例；备份时先执行
+`docker compose stop`，完整备份 `./data`，再执行 `docker compose start`。
+
+GitHub Actions 会在每次 push 和 pull request 时执行 Ruff、格式检查、Mypy 和全部测试。默认分支
+通过后发布 `ghcr.io/<owner>/<repository>:latest`，`v*` tag 还会生成对应的版本标签。GHCR 包首次
+发布后需要在 GitHub Packages 设置中确认服务器所需的可见性；私有包部署前需先执行
+`docker login ghcr.io`。
+
 框架直接提供：
 
 ```text

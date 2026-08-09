@@ -29,9 +29,10 @@ RUN useradd --create-home --uid 10001 appuser \
     && mkdir -p /app/data \
     && chown appuser:appuser /app/data
 
-USER appuser
+COPY --chmod=755 docker/entrypoint.py /usr/local/bin/yukibot-entrypoint
 
 # Telegram session 和 SQLite 数据库应通过卷持久化。
 VOLUME ["/app/data"]
 
+ENTRYPOINT ["yukibot-entrypoint"]
 CMD ["yukibot"]
