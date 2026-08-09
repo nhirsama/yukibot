@@ -56,10 +56,7 @@ async def test_composed_runtime_starts_and_stops_all_resources(
     runtime = build_runtime(settings, native_client=client)  # type: ignore[arg-type]
 
     task = asyncio.create_task(runtime.application.run(install_signal_handlers=False))
-    for _ in range(100):
-        if len(runtime.application.lifecycle.started_features) == 6:
-            break
-        await asyncio.sleep(0.001)
+    await asyncio.wait_for(client.update_pump_started.wait(), timeout=1)
     assert client.connected
     assert client.update_pump_calls == 1
     assert runtime.application.lifecycle.started_features == (
