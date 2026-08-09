@@ -198,6 +198,16 @@ FORWARDER_MIGRATIONS = (
             """,
         ),
     ),
+    Migration(
+        scope="forwarder",
+        version=8,
+        description="remove completed forwarding job history",
+        statements=(
+            """
+            DELETE FROM forwarder_jobs WHERE state = 'succeeded'
+            """,
+        ),
+    ),
 )
 
 __all__ = ["FORWARDER_MIGRATIONS"]

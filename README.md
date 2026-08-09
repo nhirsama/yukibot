@@ -6,7 +6,7 @@ Yukibot 是一个基于 Python 3.12、Telethon 1.44 和 SQLite 的模块化 Tele
 - 与 Telegram 无关的事件总线、任务监管、生命周期和关闭协调；
 - 不可变 Telegram/数据库契约；
 - 环境配置和 JSON 结构化日志；
-- SQLite 事务、按功能迁移、Forwarder 持久任务与崩溃恢复；
+- SQLite 事务、按功能迁移、Forwarder 短期持久任务与崩溃恢复；
 - 可排空的 Telethon event source 和 Forwarder 自有 gateway；
 - 显式组合根与 `yukibot` CLI；
 - 带外管理命令、SQLite 管理员与运行时模块开关；
@@ -56,6 +56,21 @@ docker compose logs -f yukibot
 
 升级使用 `docker compose pull && docker compose up -d`。该项目只能运行一个实例；备份时先执行
 `docker compose stop`，完整备份 `./data`，再执行 `docker compose start`。
+
+Forwarder 只在本地保留等待、重试和失败的任务，成功后立即删除任务内的消息文本和元数据。
+升级时数据库迁移会删除旧版本累积的成功任务；SQLite 会复用释放的页，但不会立即缩小宿主机上的文件。
+需要立即回收磁盘空间时，在迁移成功后停服并执行一次：
+
+```bash
+docker compose stop yukibot
+docker compose run --rm --user 10001:10001 --entrypoint python yukibot -c \
+  'import sqlite3; db = sqlite3.connect("/app/data/yukibot.db"); db.execute("VACUUM"); db.close()'
+docker compose start yukibot
+```
+
+`forwarder_message_links` 只保存源和目标的消息 ID、路由 ID 及实际投递方式，不保存正文或媒体。
+该映射用于同步编辑和删除、保持回复链以及防止重复投递，Telegram 不会为复制转发提供这层映射，
+因此这部分仍需持久化。
 
 GitHub Actions 会在每次 push 和 pull request 时执行 Ruff、格式检查、Mypy 和全部测试。默认分支
 通过后发布 `ghcr.io/<owner>/<repository>:latest`，`v*` tag 还会生成对应的版本标签。GHCR 包首次
@@ -210,7 +225,8 @@ APIArc 通过通用 OpenAI Responses 接口配置，使用官方模型 ID：
 ```
 
 Forwarder handler 只将事件幂等写入 `forwarder_jobs`，由单个受监管 worker 按任务顺序发送。
-进程中断时，处于 `processing` 的任务会在下次启动恢复为 `pending`。严格 exactly-once 仍受
+任务成功后会从队列删除；进程中断时，处于 `processing` 的任务会在下次启动恢复为 `pending`。
+严格 exactly-once 仍受
 Telegram 发送与本地映射落库之间无法建立跨系统事务的限制。
 
 ## Development

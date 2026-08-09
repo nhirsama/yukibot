@@ -120,7 +120,8 @@ await forwarder.close()
 直接使用 `Forwarder` facade 时，相册由内存滑动窗口组装，适合嵌入和单元测试。Yukibot 框架本身
 不走这条路径：`ForwarderFeature` 将 receive/edit/delete 事件写入 `forwarder_jobs`，相册消息共享
 `group_key` 和可执行时间，由单 worker 批量领取。worker 根据 `RetryAfter` 或指数退避重新调度，
-永久错误和达到最大尝试次数的任务进入 `failed`，启动时恢复中断的 `processing` 任务。
+成功任务立即删除，永久错误和达到最大尝试次数的任务进入 `failed`，启动时恢复中断的
+`processing` 任务。因此 job 表是短期工作队列，不是 Telegram 消息归档。
 
 `MessageLinkRepository.save_many()` 使用幂等 upsert，服务在发送前检查已有映射，并用 route 级锁
 阻止同进程并发重复发送。这提供 at-least-once 任务执行和常规重放幂等；Telegram 发送成功但映射

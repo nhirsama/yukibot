@@ -53,7 +53,7 @@ async def test_enqueue_is_deduplicated_and_payload_round_trips(tmp_path: Path) -
         row = await database.fetch_one(
             "SELECT state, attempts FROM forwarder_jobs WHERE id = ?", (claimed[0].id,)
         )
-        assert row == {"state": "succeeded", "attempts": 1}
+        assert row is None
     finally:
         await database.close()
 

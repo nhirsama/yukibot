@@ -318,7 +318,7 @@ ForwardJob
 - deduplication_key
 - group_key
 - payload_json
-- state: pending | processing | succeeded | failed
+- state: pending | processing | failed（`succeeded` 仅为旧数据库结构兼容值）
 - attempts
 - available_at
 - last_error
@@ -338,6 +338,8 @@ UNIQUE(deduplication_key)
 `deduplication_key` 由操作类型、源会话、源消息和事件版本组成。receive/delete 使用稳定消息键；edit
 包含 Telegram 编辑时间与可编辑内容指纹，因此同一次编辑重放会被去重，秒级时间戳内的连续编辑仍能
 执行。worker 重试整个事件时，已成功 route 的 `MessageLink` 会在副作用前被识别，避免再次发送。
+任务成功后整行删除，包含正文或标题的 `payload_json` 不作为历史数据保留；只有等待、处理、重试和失败任务
+留在队列中。`MessageLink` 只保留编辑、删除、回复映射和重放去重所需的 ID 及投递模式，不保存消息内容。
 
 ### 8.3 处理流程
 
@@ -351,7 +353,7 @@ Telethon update
     -> 按显式 topic_id 或持久化的自动 topic_id 定位
     -> Telegram gateway
     -> 写入 MessageLink
-    -> 标记任务完成
+    -> 删除已完成任务
 ```
 
 handler 只做快速校验和任务落库，不在 Telethon update 回调里下载、上传或等待限流。worker 负责实际发送。
@@ -361,6 +363,7 @@ handler 只做快速校验和任务落库，不在 Telethon update 回调里下�
 - 单 worker 按 job ID 顺序处理，Telegram request limiter 额外串行化同一个目标 chat。
 - 当前不并发执行不同目标；只有吞吐数据证明需要时才引入按目标分区的 worker。
 - 领取任务时进入 `processing`；单实例进程重启时将未完成任务恢复为 `pending`。
+- 执行成功后删除任务，失败任务保留最后错误用于排查。
 - 相册按 `grouped_id` 在短时间窗口内聚合，再作为一个任务提交。
 - 编辑或删除早于 create 完成时，延后该任务，而不是直接丢弃。
 

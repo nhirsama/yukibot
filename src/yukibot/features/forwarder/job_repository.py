@@ -114,10 +114,27 @@ class SqliteForwardJobRepository:
         return tuple(_job_from_row(row) for row in rows)
 
     async def mark_succeeded(self, job_ids: Sequence[int]) -> None:
-        await self._set_terminal_state(job_ids, "succeeded", None)
+        if not job_ids:
+            return
+        await self._database.execute(
+            f"""
+            DELETE FROM forwarder_jobs
+            WHERE id IN ({_placeholders(job_ids)}) AND state = 'processing'
+            """,
+            job_ids,
+        )
 
     async def mark_failed(self, job_ids: Sequence[int], error: str) -> None:
-        await self._set_terminal_state(job_ids, "failed", error)
+        if not job_ids:
+            return
+        await self._database.execute(
+            f"""
+            UPDATE forwarder_jobs
+            SET state = 'failed', last_error = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id IN ({_placeholders(job_ids)}) AND state = 'processing'
+            """,
+            (error, *job_ids),
+        )
 
     async def reschedule(
         self,
@@ -136,23 +153,6 @@ class SqliteForwardJobRepository:
             WHERE id IN ({_placeholders(job_ids)}) AND state = 'processing'
             """,
             (available_at, error, *job_ids),
-        )
-
-    async def _set_terminal_state(
-        self,
-        job_ids: Sequence[int],
-        state: str,
-        error: str | None,
-    ) -> None:
-        if not job_ids:
-            return
-        await self._database.execute(
-            f"""
-            UPDATE forwarder_jobs
-            SET state = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id IN ({_placeholders(job_ids)}) AND state = 'processing'
-            """,
-            (state, error, *job_ids),
         )
 
 
