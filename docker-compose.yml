@@ -1,9 +1,21 @@
 services:
   yukibot:
-    image: ${YUKIBOT_IMAGE:-ghcr.io/nhirsama/yukibot:latest}
-    pull_policy: always
-    env_file:
-      - .env
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${YUKIBOT_IMAGE:-yukibot:local}
+    environment:
+      # Accept both the current YUKIBOT_* names and the legacy unprefixed
+      # names used by older .env files.
+      YUKIBOT_TELEGRAM_API_ID: "${YUKIBOT_TELEGRAM_API_ID:-${TELEGRAM_API_ID}}"
+      YUKIBOT_TELEGRAM_API_HASH: "${YUKIBOT_TELEGRAM_API_HASH:-${TELEGRAM_API_HASH}}"
+      YUKIBOT_TELEGRAM_SESSION_PATH: "${YUKIBOT_TELEGRAM_SESSION_PATH:-${TELEGRAM_SESSION_PATH:-data/yukibot.session}}"
+      YUKIBOT_DATABASE_URL: "${YUKIBOT_DATABASE_URL:-postgresql://${POSTGRES_USER:-yukibot}:${POSTGRES_PASSWORD:-yukibot}@postgres:5432/${POSTGRES_DB:-yukibot}?sslmode=disable}"
+      YUKIBOT_LOG_LEVEL: "${YUKIBOT_LOG_LEVEL:-${LOG_LEVEL:-INFO}}"
+      YUKIBOT_FORWARDER_ALBUM_DELAY: "${YUKIBOT_FORWARDER_ALBUM_DELAY:-${FORWARDER_ALBUM_DELAY:-0.8}}"
+      YUKIBOT_SHUTDOWN_TIMEOUT: "${YUKIBOT_SHUTDOWN_TIMEOUT:-${SHUTDOWN_TIMEOUT:-15}}"
+      YUKIBOT_REBUILD_JOIN_MIN_INTERVAL: "${YUKIBOT_REBUILD_JOIN_MIN_INTERVAL:-${REBUILD_JOIN_MIN_INTERVAL:-300}}"
+      YUKIBOT_REBUILD_JOIN_MAX_INTERVAL: "${YUKIBOT_REBUILD_JOIN_MAX_INTERVAL:-${REBUILD_JOIN_MAX_INTERVAL:-600}}"
     volumes:
       - ./data:/app/data
     restart: unless-stopped

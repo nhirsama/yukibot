@@ -11,3 +11,4 @@ __pycache__/
 *.session-wal
 data/
 dist/
+/.idea/
