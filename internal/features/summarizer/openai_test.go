@@ -1,0 +1,209 @@
+package summarizer
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+func TestResponsesURL(t *testing.T) {
+	cases := map[string]string{
+		"":                          "https://api.openai.com/v1/responses",
+		"https://api.openai.com":    "https://api.openai.com/v1/responses",
+		"https://models.example/v1": "https://models.example/v1/responses",
+		"https://models.example":    "https://models.example/v1/responses",
+	}
+	for base, want := range cases {
+		if got := responsesURL(base); got != want {
+			t.Fatalf("%q -> %s, want %s", base, got, want)
+		}
+	}
+}
+
+func TestGeneratorRetriesEmptyOutputAfterOneSecond(t *testing.T) {
+	const outputText = `{"topics":[{"title":"Release","summary":"Version one shipped.","evidence_message_ids":[10],"action_items":[{"task":"Verify","owner":"Alice"}]}]}`
+	var mu sync.Mutex
+	var bodies [][]byte
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, body)
+		calls++
+		attempt := calls
+		mu.Unlock()
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/responses" {
+			t.Errorf("request %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("User-Agent") != "yukibot/0.1.0" {
+			t.Errorf("user agent %s", r.Header.Get("User-Agent"))
+		}
+		if r.Header.Get("Authorization") != "Bearer secret" {
+			t.Errorf("authorization %s", r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		if attempt == 1 {
+			_, _ = io.WriteString(w, sseEvent(t, map[string]any{"type": "response.in_progress"}))
+			_, _ = io.WriteString(w, sseEvent(t, map[string]any{"type": "response.completed", "response": map[string]any{}}))
+			return
+		}
+		_, _ = io.WriteString(w, sseEvent(t, map[string]any{"type": "response.output_text.delta", "delta": outputText}))
+		_, _ = io.WriteString(w, sseEvent(t, map[string]any{"type": "response.completed", "response": map[string]any{}}))
+	}))
+	defer server.Close()
+
+	var slept []time.Duration
+	generator := NewOpenAISummaryGenerator()
+	generator.http = server.Client()
+	generator.SetSleep(func(_ context.Context, delay time.Duration) error {
+		slept = append(slept, delay)
+		return nil
+	})
+	base := server.URL + "/v1"
+	config, err := NewSummaryModelConfig("openai", "deepseek-v4-flash", strPtr("secret"), &base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document, err := generator.Generate(context.Background(), config, "system", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := generator.Reset(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(document.Topics) != 1 || !reflectEvidence(document, 10) || document.Topics[0].ActionItems[0].Owner == nil || *document.Topics[0].ActionItems[0].Owner != "Alice" {
+		t.Fatalf("%+v", document)
+	}
+	if len(slept) != 1 || slept[0] != time.Second {
+		t.Fatalf("sleeps %v", slept)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(bodies) != 2 {
+		t.Fatalf("requests %d", len(bodies))
+	}
+	assertResponsesRequest(t, bodies[1])
+}
+
+func TestGeneratorRetriesUpstreamError(t *testing.T) {
+	const outputText = `{"topics":[{"title":"Release","summary":"Version one shipped.","evidence_message_ids":[10]}]}`
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "text/event-stream")
+		if calls == 1 {
+			_, _ = io.WriteString(w, sseEvent(t, map[string]any{
+				"type": "response.failed",
+				"response": map[string]any{
+					"error": map[string]any{"code": "upstream_error", "message": "upstream failed"},
+				},
+			}))
+			return
+		}
+		_, _ = io.WriteString(w, sseEvent(t, map[string]any{"type": "response.output_text.delta", "delta": outputText}))
+	}))
+	defer server.Close()
+	var slept []time.Duration
+	generator := NewOpenAISummaryGenerator()
+	generator.http = server.Client()
+	generator.SetSleep(func(_ context.Context, delay time.Duration) error {
+		slept = append(slept, delay)
+		return nil
+	})
+	base := server.URL + "/v1"
+	config, err := NewSummaryModelConfig("openai", "deepseek-v4-flash", strPtr("secret"), &base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document, err := generator.Generate(context.Background(), config, "system", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || len(slept) != 1 || slept[0] != time.Second || !reflectEvidence(document, 10) {
+		t.Fatalf("calls %d sleeps %v document %+v", calls, slept, document)
+	}
+}
+
+func TestGeneratorRejectsNonOpenAIProvider(t *testing.T) {
+	generator := NewOpenAISummaryGenerator()
+	_, err := generator.Generate(context.Background(), SummaryModelConfig{Provider: "apiarc", Model: "deepseek-v4-flash"}, "system", "user")
+	var unavailable *SummaryModelUnavailableError
+	if !errors.As(err, &unavailable) || !strings.Contains(err.Error(), "provider must be openai") {
+		t.Fatal(err)
+	}
+}
+
+func TestGeneratorReraisesContextCanceled(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer server.Close()
+	generator := NewOpenAISummaryGenerator()
+	generator.http = server.Client()
+	base := server.URL
+	config, err := NewSummaryModelConfig("openai", "deepseek-v4-flash", strPtr("secret"), &base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = generator.Generate(ctx, config, "system", "user")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	var unavailable *SummaryModelUnavailableError
+	if errors.As(err, &unavailable) {
+		t.Fatal("canceled error was wrapped")
+	}
+}
+
+func sseEvent(t *testing.T, event any) string {
+	t.Helper()
+	raw, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return "data: " + string(raw) + "\n\n"
+}
+
+func assertResponsesRequest(t *testing.T, body []byte) {
+	t.Helper()
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"temperature", "max_output_tokens", "tools", "tool_choice"} {
+		if _, ok := payload[key]; ok {
+			t.Fatalf("forbidden field %s in %s", key, body)
+		}
+	}
+	var request struct {
+		Model  string `json:"model"`
+		Stream bool   `json:"stream"`
+		Input  []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"input"`
+	}
+	if err := json.Unmarshal(body, &request); err != nil {
+		t.Fatal(err)
+	}
+	if request.Model != "deepseek-v4-flash" || !request.Stream || len(request.Input) != 2 {
+		t.Fatalf("%+v", request)
+	}
+	if request.Input[0].Role != "system" || !strings.Contains(request.Input[0].Content, "JSON Schema:") || !strings.Contains(request.Input[0].Content, summaryJSONSchema) {
+		t.Fatal(request.Input[0].Content)
+	}
+	if request.Input[1].Role != "user" || request.Input[1].Content != "user" {
+		t.Fatal(request.Input[1])
+	}
+}
+
+func reflectEvidence(document SummaryDocument, id int) bool {
+	return len(document.Topics) == 1 && len(document.Topics[0].EvidenceMessageIDs) == 1 && document.Topics[0].EvidenceMessageIDs[0] == id
+}
