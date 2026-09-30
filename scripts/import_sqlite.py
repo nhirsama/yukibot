@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Import a Python Yukibot SQLite database into the PostgreSQL schema.
+"""Import a Python yukibot SQLite database into the PostgreSQL schema.
 
 SQLite migration rows are not copied. The Go process owns
 yukibot_schema_migrations and its checksums. Naive SQLite timestamps are UTC.

@@ -1,4 +1,4 @@
-# Yukibot Go 架构
+# yukibot Go 架构
 
 > 状态：目标实现。行为以当前 Python 实现和 `docs/architecture.md` 为准，技术选型以本次迁移决定为准。
 > 语言：Go（单静态二进制，`CGO_ENABLED=0`）

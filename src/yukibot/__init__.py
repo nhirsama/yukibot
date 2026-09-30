@@ -1,1 +1,1 @@
-"""Reusable Yukibot components."""
+"""Reusable yukibot components."""

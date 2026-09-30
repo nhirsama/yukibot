@@ -286,7 +286,7 @@ def create_telethon_client(
         api_id,
         api_hash,
         catch_up=True,
-        device_model="Yukibot",
+        device_model="yukibot",
         flood_sleep_threshold=0,
         sequential_updates=True,
     )

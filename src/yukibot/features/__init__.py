@@ -1,1 +1,1 @@
-"""Independent Yukibot feature modules."""
+"""Independent yukibot feature modules."""

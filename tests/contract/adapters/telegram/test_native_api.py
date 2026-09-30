@@ -32,7 +32,7 @@ def test_stable_telethon_api_matches_adapter(tmp_path: Path) -> None:
         assert telethon.__version__ == "1.44.0"
         assert isinstance(client, TelethonClientAdapter)
         assert isinstance(raw_client, TelegramClient)
-        assert raw_client._init_request.device_model == "Yukibot"  # type: ignore[attr-defined]
+        assert raw_client._init_request.device_model == "yukibot"  # type: ignore[attr-defined]
         assert telethon_event_types() == (
             events.NewMessage,
             events.MessageEdited,

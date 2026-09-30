@@ -117,7 +117,7 @@ await forwarder.close()
 
 ## 框架运行路径
 
-直接使用 `Forwarder` facade 时，相册由内存滑动窗口组装，适合嵌入和单元测试。Yukibot 框架本身
+直接使用 `Forwarder` facade 时，相册由内存滑动窗口组装，适合嵌入和单元测试。yukibot 框架本身
 不走这条路径：`ForwarderFeature` 将 receive/edit/delete 事件写入 `forwarder_jobs`，相册消息共享
 `group_key` 和可执行时间，由单 worker 批量领取。worker 根据 `RetryAfter` 或指数退避重新调度，
 成功任务立即删除，永久错误和达到最大尝试次数的任务进入 `failed`，启动时恢复中断的

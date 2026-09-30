@@ -1,6 +1,6 @@
-# Yukibot
+# yukibot
 
-Yukibot 是一个基于 Python 3.12、Telethon 1.44 和 SQLite 的模块化 Telegram userbot。
+yukibot 是一个基于 Python 3.12、Telethon 1.44 和 SQLite 的模块化 Telegram userbot。
 当前实现包含：
 
 - 与 Telegram 无关的事件总线、任务监管、生命周期和关闭协调；
@@ -128,14 +128,14 @@ Forwarder 提供：
 
 `source` 和 `destination` 都可以使用数字 ID、`@username`、公开链接
 `https://t.me/<username>`，以及私有邀请链接 `https://t.me/+<hash>`、
-`https://t.me/joinchat/<hash>` 或 `tg://join?invite=<hash>`。使用私有邀请链接时，Yukibot 会先检查
+`https://t.me/joinchat/<hash>` 或 `tg://join?invite=<hash>`。使用私有邀请链接时，yukibot 会先检查
 当前账号是否已经加入；未加入时会通过该链接加入，再将稳定 ID 写入路由。需要管理员审批的群组会
 提示先等待审批，通过后重新执行命令。成功创建或更新路由后，使用过的邀请链接会保存为换号重建的
 兜底信息；路由列表优先显示用户名。默认实时模式也会幂等地加入尚未加入的公开源频道。通过数字 ID、
 用户名或公开链接配置目标群时，账号仍须已经加入目标群并拥有发消息所需的权限。
 
 路由默认使用 Telegram 原生转发；来源禁止转发或当前操作无法原生转发时自动回退为复制。目标是
-论坛超级群且没有指定 `destination_topic` 时，Yukibot 会创建并保存自动话题；源是超级群组内部话题时
+论坛超级群且没有指定 `destination_topic` 时，yukibot 会创建并保存自动话题；源是超级群组内部话题时
 使用“群组名/话题名”，未指定内部话题时使用群组名；
 此后只使用持久化的 `topic_id` 定位，源频道改名后再通过明确的改名事件同步话题标题。临时缺失的
 频道名称不会覆盖已有标题。相同“源群组/源话题 -> 目标论坛群”的路由复用同一个自动话题，不同
@@ -243,7 +243,7 @@ uv run mypy src
 
 Copyright (C) 2026 [nhirsama](https://github.com/nhirsama).
 
-Yukibot 源代码采用 [GNU Affero General Public License v3.0 or later](LICENSE)
+yukibot 源代码采用 [GNU Affero General Public License v3.0 or later](LICENSE)
 （`AGPL-3.0-or-later`）授权。项目源码位于
-[github.com/nhirsama/Yukibot](https://github.com/nhirsama/Yukibot)。第三方依赖和基础镜像组件
+[github.com/nhirsama/yukibot](https://github.com/nhirsama/yukibot)。第三方依赖和基础镜像组件
 继续适用各自的许可证与版权声明。

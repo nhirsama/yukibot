@@ -19,8 +19,8 @@ dependencies = [
 yukibot = "yukibot.__main__:main"
 
 [project.urls]
-Repository = "https://github.com/nhirsama/Yukibot"
-Source = "https://github.com/nhirsama/Yukibot"
+Repository = "https://github.com/nhirsama/yukibot"
+Source = "https://github.com/nhirsama/yukibot"
 
 [build-system]
 requires = ["hatchling"]

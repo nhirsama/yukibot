@@ -1,99 +1,91 @@
-# name: CI
+name: CI
 
-# on:
-#   push:
-#   pull_request:
-#   workflow_dispatch:
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
 
-# concurrency:
-#   group: ci-${{ github.workflow }}-${{ github.ref }}
-#   cancel-in-progress: ${{ github.ref_type != 'tag' }}
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
-# permissions:
-#   contents: read
+permissions:
+  contents: read
 
-# jobs:
-#   quality:
-#     name: Quality
-#     runs-on: ubuntu-latest
-#     steps:
-#       - uses: actions/checkout@v4
-#       - uses: astral-sh/setup-uv@v6
-#         with:
-#           version: "0.12.1"
-#           enable-cache: true
-#       - run: uv python install 3.12
-#       - run: uv sync --frozen --dev
-#       - run: uv run ruff check .
-#       - run: uv run ruff format --check .
-#       - run: uv run mypy src
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
 
-#   tests:
-#     name: Tests (${{ matrix.suite }})
-#     runs-on: ubuntu-latest
-#     strategy:
-#       fail-fast: false
-#       matrix:
-#         suite:
-#           - architecture
-#           - contract
-#           - integration
-#           - unit
-#     steps:
-#       - uses: actions/checkout@v4
-#       - uses: astral-sh/setup-uv@v6
-#         with:
-#           version: "0.12.1"
-#           enable-cache: true
-#       - run: uv python install 3.12
-#       - run: uv sync --frozen --dev
-#       - run: uv run pytest tests/${{ matrix.suite }}
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
 
-#   publish:
-#     name: Publish image
-#     if: >-
-#       github.event_name == 'push' &&
-#       (github.ref_name == github.event.repository.default_branch ||
-#       startsWith(github.ref, 'refs/tags/v'))
-#     needs:
-#       - quality
-#       - tests
-#     runs-on: ubuntu-latest
-#     permissions:
-#       contents: read
-#       packages: write
-#     steps:
-#       - uses: actions/checkout@v4
-#       - name: Normalize image name
-#         id: image
-#         shell: bash
-#         run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-#       - uses: docker/setup-qemu-action@v3
-#       - uses: docker/setup-buildx-action@v3
-#       - uses: docker/login-action@v3
-#         with:
-#           registry: ghcr.io
-#           username: ${{ github.actor }}
-#           password: ${{ secrets.GITHUB_TOKEN }}
-#       - uses: docker/metadata-action@v5
-#         id: meta
-#         with:
-#           images: ${{ steps.image.outputs.name }}
-#           flavor: latest=false
-#           tags: |
-#             type=raw,value=latest,enable=${{ github.ref_name == github.event.repository.default_branch }}
-#             type=ref,event=branch
-#             type=ref,event=tag
-#             type=semver,pattern={{version}}
-#             type=semver,pattern={{major}}.{{minor}}
-#       - uses: docker/build-push-action@v6
-#         with:
-#           context: .
-#           push: true
-#           platforms: linux/amd64,linux/arm64
-#           tags: ${{ steps.meta.outputs.tags }}
-#           labels: ${{ steps.meta.outputs.labels }}
-#           cache-from: type=gha
-#           cache-to: type=gha,mode=max
-#           provenance: mode=max
-#           sbom: true
+      - name: Run vet
+        run: go vet ./...
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build binary
+        run: go build ./cmd/yukibot
+
+  publish:
+    name: Publish image
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Normalize image name
+        id: image
+        shell: bash
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

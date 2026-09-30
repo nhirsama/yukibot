@@ -1,4 +1,4 @@
-"""Explicit composition root for the Yukibot process."""
+"""Explicit composition root for the yukibot process."""
 
 from __future__ import annotations
 
