@@ -17,6 +17,13 @@ import (
 
 const summaryUserAgent = "yukibot/0.1.0"
 
+// Bound untrusted provider data independently of the request timeout.
+const (
+	maxSSEEventBytes      = 4 * 1024 * 1024
+	maxSSEStreamBytes     = 16 * 1024 * 1024
+	maxSummaryOutputBytes = 4 * 1024 * 1024
+)
+
 // summaryJSONSchema is pydantic 2.13.4 _SummaryOutput.model_json_schema(),
 // encoded with ensure_ascii=False and compact separators.
 const summaryJSONSchema = `{"$defs":{"_ActionItemOutput":{"properties":{"task":{"maxLength":500,"minLength":1,"title":"Task","type":"string"},"owner":{"anyOf":[{"maxLength":200,"type":"string"},{"type":"null"}],"default":null,"title":"Owner"},"deadline":{"anyOf":[{"maxLength":200,"type":"string"},{"type":"null"}],"default":null,"title":"Deadline"}},"required":["task"],"title":"_ActionItemOutput","type":"object"},"_TopicOutput":{"properties":{"title":{"maxLength":200,"minLength":1,"title":"Title","type":"string"},"summary":{"maxLength":2000,"minLength":1,"title":"Summary","type":"string"},"evidence_message_ids":{"items":{"type":"integer"},"maxItems":10,"minItems":1,"title":"Evidence Message Ids","type":"array"},"participants":{"items":{"type":"string"},"maxItems":30,"title":"Participants","type":"array"},"decisions":{"items":{"type":"string"},"maxItems":10,"title":"Decisions","type":"array"},"action_items":{"items":{"$ref":"#/$defs/_ActionItemOutput"},"maxItems":10,"title":"Action Items","type":"array"},"open_questions":{"items":{"type":"string"},"maxItems":10,"title":"Open Questions","type":"array"}},"required":["title","summary","evidence_message_ids"],"title":"_TopicOutput","type":"object"}},"properties":{"topics":{"items":{"$ref":"#/$defs/_TopicOutput"},"maxItems":12,"title":"Topics","type":"array"}},"required":["topics"],"title":"_SummaryOutput","type":"object"}`
@@ -204,21 +211,27 @@ func (g *OpenAISummaryGenerator) streamText(ctx context.Context, config SummaryM
 }
 
 func consumeSSE(r io.Reader, fn func(string) error) error {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	limited := &io.LimitedReader{R: r, N: maxSSEStreamBytes + 1}
+	scanner := bufio.NewScanner(limited)
+	scanner.Buffer(make([]byte, 64*1024), maxSSEEventBytes)
 	var data []string
+	eventBytes := 0
 	flush := func() error {
 		if len(data) == 0 {
 			return nil
 		}
 		payload := strings.Join(data, "\n")
 		data = nil
+		eventBytes = 0
 		if payload == "[DONE]" {
 			return errSSEDone
 		}
 		return fn(payload)
 	}
 	for scanner.Scan() {
+		if limited.N == 0 {
+			return &runtimeError{msg: "Responses stream exceeds byte limit"}
+		}
 		line := strings.TrimRight(scanner.Text(), "\r")
 		if line == "" {
 			if err := flush(); err != nil {
@@ -235,6 +248,14 @@ func consumeSSE(r io.Reader, fn func(string) error) error {
 		if strings.HasPrefix(line, "data:") {
 			value := strings.TrimPrefix(line, "data:")
 			value = strings.TrimPrefix(value, " ")
+			size := len(value)
+			if len(data) > 0 {
+				size++ // The newline inserted when joining data lines.
+			}
+			if size > maxSSEEventBytes-eventBytes {
+				return &runtimeError{msg: "Responses stream event exceeds byte limit"}
+			}
+			eventBytes += size
 			data = append(data, value)
 		}
 	}
@@ -243,6 +264,9 @@ func consumeSSE(r io.Reader, fn func(string) error) error {
 			return err
 		}
 		return &runtimeError{msg: err.Error()}
+	}
+	if limited.N == 0 {
+		return &runtimeError{msg: "Responses stream exceeds byte limit"}
 	}
 	if err := flush(); err != nil && !errors.Is(err, errSSEDone) {
 		return err
@@ -274,6 +298,9 @@ func applyStreamEvent(data string, text *strings.Builder) error {
 	switch event.Type {
 	case "response.output_text.delta":
 		if delta, ok := jsonString(event.Delta); ok {
+			if len(delta) > maxSummaryOutputBytes-text.Len() {
+				return &runtimeError{msg: "Responses output text exceeds byte limit"}
+			}
 			text.WriteString(delta)
 		}
 	case "response.failed":

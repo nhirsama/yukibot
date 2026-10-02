@@ -56,3 +56,21 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		t.Fatalf("order: %v", err)
 	}
 }
+
+func TestLoadRejectsNonFiniteDurations(t *testing.T) {
+	t.Setenv("YUKIBOT_TELEGRAM_API_ID", "12345")
+	t.Setenv("YUKIBOT_TELEGRAM_API_HASH", "test-hash")
+	for _, key := range []string{
+		"FORWARDER_ALBUM_DELAY", "SHUTDOWN_TIMEOUT",
+		"REBUILD_JOIN_MIN_INTERVAL", "REBUILD_JOIN_MAX_INTERVAL",
+	} {
+		for _, value := range []string{"NaN", "+Inf", "-Inf"} {
+			t.Run(key+"/"+value, func(t *testing.T) {
+				t.Setenv("YUKIBOT_"+key, value)
+				if _, err := Load(); err == nil {
+					t.Fatalf("%s accepted %s", key, value)
+				}
+			})
+		}
+	}
+}

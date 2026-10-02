@@ -207,3 +207,44 @@ func assertResponsesRequest(t *testing.T, body []byte) {
 func reflectEvidence(document SummaryDocument, id int) bool {
 	return len(document.Topics) == 1 && len(document.Topics[0].EvidenceMessageIDs) == 1 && document.Topics[0].EvidenceMessageIDs[0] == id
 }
+
+func TestConsumeSSERejectsOversizedMultilineEvent(t *testing.T) {
+	// Every line is small enough for Scanner, but the event as a whole is not.
+	stream := strings.Repeat("data: "+strings.Repeat("x", 1024)+"\n", 4097) + "\n"
+	called := false
+	err := consumeSSE(strings.NewReader(stream), func(string) error {
+		called = true
+		return nil
+	})
+	if err == nil || called {
+		t.Fatalf("oversized event accepted: error=%v callback=%v", err, called)
+	}
+}
+
+func TestConsumeSSERejectsOversizedStream(t *testing.T) {
+	// Comments do not contribute to output, but still consume network/CPU resources.
+	stream := strings.Repeat(":"+strings.Repeat("x", 1023)+"\n", 16385)
+	if err := consumeSSE(strings.NewReader(stream), func(string) error { return nil }); err == nil {
+		t.Fatal("oversized response accepted")
+	}
+}
+
+func TestApplyStreamEventBoundsAccumulatedOutput(t *testing.T) {
+	var text strings.Builder
+	text.WriteString(strings.Repeat("x", 4*1024*1024))
+	err := applyStreamEvent(`{"type":"response.output_text.delta","delta":"x"}`, &text)
+	if err == nil || text.Len() != 4*1024*1024 {
+		t.Fatalf("output exceeded limit: error=%v length=%d", err, text.Len())
+	}
+}
+
+func TestConsumeSSEMultilineAndDone(t *testing.T) {
+	var payloads []string
+	err := consumeSSE(strings.NewReader(": comment\r\ndata: first\r\ndata: second\r\n\r\ndata: [DONE]\n\ndata: ignored\n\n"), func(data string) error {
+		payloads = append(payloads, data)
+		return nil
+	})
+	if err != nil || len(payloads) != 1 || payloads[0] != "first\nsecond" {
+		t.Fatalf("error=%v payloads=%v", err, payloads)
+	}
+}

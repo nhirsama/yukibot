@@ -3,6 +3,7 @@ package config
 import (
 	"bufio"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -78,28 +79,28 @@ func Load() (Settings, error) {
 	}
 	if value, ok := lookup("FORWARDER_ALBUM_DELAY"); ok {
 		seconds, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
-		if err != nil || seconds < 0 || seconds > 10 {
+		if err != nil || math.IsNaN(seconds) || seconds < 0 || seconds > 10 {
 			return Settings{}, fmt.Errorf("forwarder_album_delay must be greater than or equal to 0 and at most 10")
 		}
 		settings.ForwarderAlbumDelay = time.Duration(seconds * float64(time.Second))
 	}
 	if value, ok := lookup("SHUTDOWN_TIMEOUT"); ok {
 		seconds, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
-		if err != nil || seconds <= 0 || seconds > 300 {
+		if err != nil || math.IsNaN(seconds) || seconds <= 0 || seconds > 300 {
 			return Settings{}, fmt.Errorf("shutdown_timeout must be greater than 0 and at most 300")
 		}
 		settings.ShutdownTimeout = time.Duration(seconds * float64(time.Second))
 	}
 	if value, ok := lookup("REBUILD_JOIN_MIN_INTERVAL"); ok {
 		seconds, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
-		if err != nil || seconds < 300 || seconds > 86400 {
+		if err != nil || math.IsNaN(seconds) || seconds < 300 || seconds > 86400 {
 			return Settings{}, fmt.Errorf("rebuild_join_min_interval must be greater than or equal to 300")
 		}
 		settings.RebuildJoinMinInterval = time.Duration(seconds * float64(time.Second))
 	}
 	if value, ok := lookup("REBUILD_JOIN_MAX_INTERVAL"); ok {
 		seconds, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
-		if err != nil || seconds < 300 || seconds > 86400 {
+		if err != nil || math.IsNaN(seconds) || seconds < 300 || seconds > 86400 {
 			return Settings{}, fmt.Errorf("rebuild_join_max_interval must be greater than or equal to 300")
 		}
 		settings.RebuildJoinMaxInterval = time.Duration(seconds * float64(time.Second))
