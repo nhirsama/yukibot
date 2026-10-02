@@ -42,7 +42,7 @@ func normalizeService(message *tg.MessageService, fallback time.Time) (contracts
 		Outgoing:    message.Out,
 		Service:     &service,
 	}
-	if sender, ok := senderID(message.FromID); ok {
+	if sender, ok := messageSenderID(message.FromID, message.PeerID, message.Out); ok {
 		normalized.SenderID = &sender
 	}
 	if topic, ok := topicID(message.ReplyTo, message.Action, message.ID); ok {
@@ -84,7 +84,7 @@ func normalizeMessage(message *tg.Message, fallback time.Time) (contracts.Telegr
 	} else {
 		normalized.Caption = body
 	}
-	if sender, ok := senderID(message.FromID); ok {
+	if sender, ok := messageSenderID(message.FromID, message.PeerID, message.Out); ok {
 		normalized.SenderID = &sender
 	}
 	if topic, ok := topicID(message.ReplyTo, nil, message.ID); ok {
@@ -259,9 +259,22 @@ func replyID(reply tg.MessageReplyHeaderClass) (int, bool) {
 	return id, ok && id > 0
 }
 
+// Incoming private messages may omit from_id: their peer is the sender.
+// Never infer the actor from an outgoing recipient or a group/channel peer,
+// and never replace an explicit sender (including anonymous/send-as peers).
+func messageSenderID(from, peer tg.PeerClass, outgoing bool) (int64, bool) {
+	if from != nil {
+		return senderID(from)
+	}
+	if !outgoing {
+		return senderID(peer)
+	}
+	return 0, false
+}
+
 func senderID(peer tg.PeerClass) (int64, bool) {
 	user, ok := peer.(*tg.PeerUser)
-	if !ok || user == nil || user.UserID == 0 {
+	if !ok || user == nil || user.UserID <= 0 {
 		return 0, false
 	}
 	return user.UserID, true

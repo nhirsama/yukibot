@@ -102,6 +102,15 @@ GitHub Actions 会在每次 push 和 pull request 时执行 Ruff、格式检查�
 账号本身不能从管理员体系中删除。额外管理员使用稳定的 Telegram user ID 存储在 SQLite 中。
 管理模块本身始终保持可用，不属于可关闭模块。
 
+Go 运行时按登录账号的稳定 user ID 识别 owner，不依赖消息一定带有 `outgoing` 标志。
+收到的私聊消息省略 `from_id` 时，会用该私聊的用户 peer 识别发送者；不会用群组、频道、
+转发来源或发出消息的收件人推断管理员。这里的 admin 指通过 `/admin admin add` 登记的
+yukibot 管理员，不会因为某人是 Telegram 群管理员而自动授权。匿名身份或“以频道身份发送”
+无法确认个人 user ID 时，请改用个人身份私聊登录账号。
+
+遇到 `Permission denied.` 时，命令尚未进入路由添加逻辑，这与源频道或目标群的发言权限不同。
+修复身份问题或登记管理员后，请发送一条新命令；编辑旧命令不会执行，旧消息的处理回执也不会被重放。
+
 Forwarder 提供：
 
 ```text

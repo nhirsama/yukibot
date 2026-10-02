@@ -52,3 +52,26 @@ func TestNormalizeTopicCreateUsesMessageID(t *testing.T) {
 		t.Fatalf("service = %+v", got.Service)
 	}
 }
+
+func TestNormalizePrivateSenderFallback(t *testing.T) {
+	for _, service := range []bool{false, true} {
+		t.Run(map[bool]string{false: "message", true: "service"}[service], func(t *testing.T) {
+			for _, outgoing := range []bool{false, true} {
+				var raw tg.MessageClass = &tg.Message{ID: 1, PeerID: &tg.PeerUser{UserID: 123}, Out: outgoing}
+				if service {
+					raw = &tg.MessageService{ID: 1, PeerID: &tg.PeerUser{UserID: 123}, Out: outgoing, Action: &tg.MessageActionHistoryClear{}}
+				}
+				got, ok := Normalize(raw, time.Now())
+				if !ok {
+					t.Fatal("normalization failed")
+				}
+				if outgoing && got.SenderID != nil {
+					t.Fatal("outgoing recipient was mistaken for sender")
+				}
+				if !outgoing && (got.SenderID == nil || *got.SenderID != 123) {
+					t.Fatal("incoming private sender was lost")
+				}
+			}
+		})
+	}
+}

@@ -55,8 +55,8 @@ func TestOutgoingIsAuthorizedAndOwnerIsNotStored(t *testing.T) {
 		t.Fatalf("outgoing %v %v", authorized, err)
 	}
 	authorized, err = service.IsAuthorized(ctx, incomingOwner)
-	if err != nil || authorized {
-		t.Fatalf("owner is not an admin until stored: %v %v", authorized, err)
+	if err != nil || !authorized {
+		t.Fatalf("owner must be authorized independently of outgoing: %v %v", authorized, err)
 	}
 	authorized, err = service.IsAuthorized(ctx, delegated)
 	if err != nil || authorized {
@@ -152,6 +152,47 @@ func TestServiceUnavailableIdentity(t *testing.T) {
 	_, _, err := service.ListAdmins(context.Background())
 	if err == nil || err.Error() != "Telegram account identity is not available" {
 		t.Fatalf("list %v", err)
+	}
+	allowed, err := service.IsAuthorized(context.Background(), kernel.ControlCommand{ActorID: ptr(123)})
+	if err == nil || allowed {
+		t.Fatalf("incoming command with unavailable identity: %v %v", allowed, err)
+	}
+}
+
+func TestAuthorizationRejectsInvalidActorsAndRevokedAdmins(t *testing.T) {
+	ctx := context.Background()
+	repository := NewMemoryRepository(Owner{ID: 999})
+	service := NewService(repository, nil, Owner{ID: 999})
+	for _, id := range []int64{0, -123} {
+		// Even a malformed persisted row must not authorize an invalid actor.
+		if err := repository.AddAdmin(ctx, id, 999); err != nil {
+			t.Fatal(err)
+		}
+		allowed, err := service.IsAuthorized(ctx, kernel.ControlCommand{ActorID: ptr(id)})
+		if err != nil || allowed {
+			t.Fatalf("invalid actor %d: %v %v", id, allowed, err)
+		}
+	}
+	if err := repository.AddAdmin(ctx, 123, 999); err != nil {
+		t.Fatal(err)
+	}
+	command := kernel.ControlCommand{ActorID: ptr(123)}
+	allowed, err := service.IsAuthorized(ctx, command)
+	if err != nil || !allowed {
+		t.Fatalf("registered admin: %v %v", allowed, err)
+	}
+	if err := repository.RemoveAdmin(ctx, 123); err != nil {
+		t.Fatal(err)
+	}
+	allowed, err = service.IsAuthorized(ctx, command)
+	if err != nil || allowed {
+		t.Fatalf("revoked admin: %v %v", allowed, err)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	allowed, err = service.IsAuthorized(canceled, kernel.ControlCommand{Outgoing: true})
+	if allowed || !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled command: %v %v", allowed, err)
 	}
 }
 

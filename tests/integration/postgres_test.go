@@ -17,6 +17,7 @@ import (
 	mgmtstore "github.com/nhirsama/yukibot/internal/features/management/store"
 	"github.com/nhirsama/yukibot/internal/features/summarizer"
 	sumstore "github.com/nhirsama/yukibot/internal/features/summarizer/store"
+	"github.com/nhirsama/yukibot/internal/kernel"
 )
 
 // TestPostgreSQL applies the real schema and checks migration checksums,
@@ -313,6 +314,21 @@ func testRepositories(t *testing.T, ctx context.Context, db *database.DB) {
 	must(t, err)
 	if !isAdmin {
 		fail(t, "admin was not stored")
+	}
+	authorization := management.NewService(admins, nil, management.Owner{ID: accountID})
+	ownerActor, adminActor := accountID, adminID
+	for _, actor := range []*int64{&ownerActor, &adminActor} {
+		allowed, err := authorization.IsAuthorized(ctx, kernel.ControlCommand{ActorID: actor})
+		must(t, err)
+		if !allowed {
+			fail(t, "owner or persisted admin %d was denied without outgoing", *actor)
+		}
+	}
+	must(t, admins.RemoveAdmin(ctx, adminID))
+	allowed, err := authorization.IsAuthorized(ctx, kernel.ControlCommand{ActorID: &adminActor})
+	must(t, err)
+	if allowed {
+		fail(t, "revoked persisted administrator remained authorized")
 	}
 	must(t, admins.SetEnabled(ctx, "itest", true))
 	enabled, err := admins.GetEnabled(ctx, "itest")

@@ -23,8 +23,8 @@ func NewService(admins AdminStore, modules Modules, identity Identity) *Service 
 }
 
 // IsAuthorized allows every outgoing command.
-// An incoming command is allowed only when its actor is a stored administrator.
-// The account owner is not authorized unless that user was stored.
+// Incoming commands must identify the authenticated owner or a stored admin.
+// The owner need not be stored and does not depend on the Telegram out flag.
 func (s *Service) IsAuthorized(ctx context.Context, command kernel.ControlCommand) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
@@ -32,8 +32,15 @@ func (s *Service) IsAuthorized(ctx context.Context, command kernel.ControlComman
 	if command.Outgoing {
 		return true, nil
 	}
-	if command.ActorID == nil {
+	if command.ActorID == nil || *command.ActorID <= 0 {
 		return false, nil
+	}
+	owner, err := s.ownerID()
+	if err != nil {
+		return false, err
+	}
+	if *command.ActorID == owner {
+		return true, nil
 	}
 	return s.admins.IsAdmin(ctx, *command.ActorID)
 }
