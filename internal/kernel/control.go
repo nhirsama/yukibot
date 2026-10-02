@@ -154,7 +154,7 @@ func commandToken(name string) bool {
 		return false
 	}
 	for _, r := range name {
-		if unicode.IsSpace(r) {
+		if commandSpace(r) {
 			return false
 		}
 	}
@@ -167,7 +167,7 @@ func SplitCommand(text string) (string, string, bool) {
 		return "", "", false
 	}
 	for index, character := range text {
-		if unicode.IsSpace(character) {
+		if commandSpace(character) {
 			return text[:index], text[index+len(string(character)):], true
 		}
 	}
@@ -268,19 +268,25 @@ func trimSpace(value string) string {
 	start, end := 0, len(value)
 	for start < end {
 		r, size := runeAt(value[start:])
-		if !unicode.IsSpace(r) {
+		if !commandSpace(r) {
 			break
 		}
 		start += size
 	}
 	for end > start {
 		r, size := lastRune(value[:end])
-		if !unicode.IsSpace(r) {
+		if !commandSpace(r) {
 			break
 		}
 		end -= size
 	}
 	return value[start:end]
+}
+
+// Python str.isspace also recognizes these four ASCII information separators.
+// Keep registration, dispatch splitting and help lookup on the same definition.
+func commandSpace(r rune) bool {
+	return unicode.IsSpace(r) || (r >= '\x1c' && r <= '\x1f')
 }
 
 func runeAt(s string) (rune, int) {

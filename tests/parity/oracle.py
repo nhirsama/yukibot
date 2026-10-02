@@ -21,7 +21,18 @@ from yukibot.contracts import (
 )
 from yukibot.features.forwarder.jobs import pending_jobs_for_event
 from yukibot.features.forwarder.models import MessageFilter, SourceEndpoint
+from yukibot.features.summarizer.models import (
+    FetchedSummaryMessages,
+    SummaryActionItem,
+    SummaryChatKind,
+    SummaryDocument,
+    SummaryEndpoint,
+    SummaryPromptPreset,
+    SummaryTopic,
+)
+from yukibot.features.summarizer.prompts import map_prompts, prompt_preference, reduce_prompts
 from yukibot.features.summarizer.references import parse_endpoint_reference
+from yukibot.kernel.control import split_command
 
 NOW = datetime(2026, 1, 2, 3, 4, 5, 123456, tzinfo=UTC)
 
@@ -45,6 +56,25 @@ def message(value):
 
 
 def evaluate(op, value):
+    if op == "command":
+        return split_command(value)
+    if op == "prompt":
+        source = FetchedSummaryMessages(
+            SummaryEndpoint(-1001), SummaryChatKind(value["kind"]), "测试 <chat>", ()
+        )
+        preference = prompt_preference(SummaryPromptPreset(value["preset"]), value["custom"])
+        if value["stage"] == "map":
+            return map_prompts(source, [json.loads(value["payload"])], preference)
+        topic = SummaryTopic(
+            "部署",
+            "保留证据",
+            (10, 11),
+            ("Alice",),
+            ("发布",),
+            (SummaryActionItem("验证", "Alice", None),),
+            ("何时完成?",),
+        )
+        return reduce_prompts(source, (SummaryDocument((topic,)), SummaryDocument()), preference)
     if op == "casefold":
         # A sparse table still checks every valid Unicode scalar: absence means
         # unchanged, not untested. Runtime Unicode-version drift must fail.
@@ -99,6 +129,39 @@ def evaluate(op, value):
 
 def corpus():
     yield "casefold", None
+    for command in [
+        "",
+        "hello",
+        " /help",
+        "/help",
+        "/route add a b",
+        "/route  add",
+        "/route\tadd",
+        "/summary\nrun 1",
+        "/admin\u00a0admin list",
+        "/help\u3000/route",
+        "/route\x1cadd",
+        "/route\x1dadd",
+        "/route\x1eadd",
+        "/route\x1fadd",
+    ]:
+        yield "command", command
+    for kind, preset, custom, stage in product(
+        ["group", "private", "channel"],
+        ["focused", "decisions", "technical", "digest"],
+        [None, "只保留可验证结论"],
+        ["map", "reduce"],
+    ):
+        yield (
+            "prompt",
+            {
+                "kind": kind,
+                "preset": preset,
+                "custom": custom,
+                "stage": stage,
+                "payload": '{"message_ids":[10,11],"text":"正文 <tag> & 中文"}',
+            },
+        )
     # All Unicode scalars whose full folding differs from lowercasing, plus
     # expanding folds in both directions. The oracle computes expected outcomes.
     for point in range(0x110000):

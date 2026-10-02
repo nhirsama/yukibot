@@ -20,6 +20,7 @@ import (
 	"github.com/nhirsama/yukibot/internal/contracts"
 	"github.com/nhirsama/yukibot/internal/features/forwarder"
 	"github.com/nhirsama/yukibot/internal/features/summarizer"
+	"github.com/nhirsama/yukibot/internal/kernel"
 	"github.com/nhirsama/yukibot/internal/textutil"
 )
 
@@ -51,6 +52,37 @@ func (m messageInput) message() contracts.TelegramMessage {
 
 func evaluate(op string, input json.RawMessage) (any, error) {
 	switch op {
+	case "command":
+		var inputText string
+		if err := json.Unmarshal(input, &inputText); err != nil {
+			return nil, err
+		}
+		name, args, ok := kernel.SplitCommand(inputText)
+		if !ok {
+			return nil, nil
+		}
+		return []string{name, args}, nil
+	case "prompt":
+		var v struct{ Kind, Preset, Custom, Stage, Payload string }
+		if err := json.Unmarshal(input, &v); err != nil {
+			return nil, err
+		}
+		source := summarizer.FetchedSummaryMessages{ChatKind: summarizer.SummaryChatKind(v.Kind), ChatTitle: "测试 <chat>"}
+		preference := summarizer.PromptPreference(summarizer.SummaryPromptPreset(v.Preset), v.Custom)
+		var system, user string
+		if v.Stage == "map" {
+			system, user = summarizer.MapPrompts(source, []json.RawMessage{json.RawMessage(v.Payload)}, preference)
+		} else {
+			owner := "Alice"
+			topic := summarizer.SummaryTopic{
+				Title: "部署", Summary: "保留证据", EvidenceMessageIDs: []int{10, 11},
+				Participants: []string{"Alice"}, Decisions: []string{"发布"},
+				ActionItems:   []summarizer.SummaryActionItem{{Task: "验证", Owner: &owner}},
+				OpenQuestions: []string{"何时完成?"},
+			}
+			system, user = summarizer.ReducePrompts(source, []summarizer.SummaryDocument{{Topics: []summarizer.SummaryTopic{topic}}, {}}, preference)
+		}
+		return []string{system, user}, nil
 	case "casefold":
 		table := map[string]string{}
 		for r := rune(0); r <= utf8.MaxRune; r++ {
