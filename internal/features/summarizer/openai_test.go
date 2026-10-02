@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -159,6 +160,73 @@ func TestGeneratorReraisesContextCanceled(t *testing.T) {
 	var unavailable *SummaryModelUnavailableError
 	if errors.As(err, &unavailable) {
 		t.Fatal("canceled error was wrapped")
+	}
+}
+
+func TestResponsesTimeoutIsIdleNotTotal(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		ticker := time.NewTicker(25 * time.Millisecond)
+		defer ticker.Stop()
+		for i := 0; i < 16; i++ {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-ticker.C:
+				_, _ = io.WriteString(w, ": heartbeat\n\n")
+				flusher.Flush()
+			}
+		}
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"{\\\"topics\\\":[]}\"}\n\n")
+	}))
+	defer server.Close()
+	generator := NewOpenAISummaryGenerator()
+	generator.http = server.Client()
+	started := time.Now()
+	text, err := generator.streamText(context.Background(), SummaryModelConfig{
+		Model: "test", BaseURL: server.URL, Timeout: 150 * time.Millisecond,
+	}, nil)
+	if err != nil || text != `{"topics":[]}` {
+		t.Fatalf("active stream aborted: text=%q err=%v", text, err)
+	}
+	if time.Since(started) <= 150*time.Millisecond {
+		t.Fatal("test must outlast the configured idle timeout")
+	}
+}
+
+func TestResponsesIdleTimeoutAndParentCancellation(t *testing.T) {
+	for _, headers := range []bool{false, true} {
+		t.Run(fmt.Sprintf("headers=%t", headers), func(t *testing.T) {
+			release := make(chan struct{})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				if headers {
+					w.Header().Set("Content-Type", "text/event-stream")
+					w.WriteHeader(http.StatusOK)
+					w.(http.Flusher).Flush()
+				}
+				select {
+				case <-r.Context().Done():
+				case <-release:
+				}
+			}))
+			defer server.Close()
+			defer close(release)
+			generator := NewOpenAISummaryGenerator()
+			generator.http = server.Client()
+			config := SummaryModelConfig{Model: "test", BaseURL: server.URL, Timeout: 50 * time.Millisecond}
+			_, err := generator.streamText(context.Background(), config, nil)
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("stalled request should time out: %v", err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			_, err = generator.streamText(ctx, config, nil)
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("parent cancellation must survive: %v", err)
+			}
+		})
 	}
 }
 

@@ -170,8 +170,10 @@ func (g *OpenAISummaryGenerator) streamText(ctx context.Context, config SummaryM
 	if err != nil {
 		return "", &runtimeError{msg: err.Error()}
 	}
-	reqCtx, cancel := context.WithTimeout(ctx, config.Timeout)
-	defer cancel()
+	// Python's Responses client bounds idle reads, not the total generation.
+	// Keep the caller's deadline, but reset our own timeout for each body read.
+	reqCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, responsesURL(config.BaseURL), strings.NewReader(payload))
 	if err != nil {
 		return "", &runtimeError{msg: err.Error()}
@@ -186,20 +188,26 @@ func (g *OpenAISummaryGenerator) streamText(ctx context.Context, config SummaryM
 	if client == nil {
 		client = http.DefaultClient
 	}
+	headerTimer := time.AfterFunc(config.Timeout, func() { cancel(context.DeadlineExceeded) })
 	resp, err := client.Do(req)
+	headerTimer.Stop()
 	if err != nil {
+		if cause := context.Cause(reqCtx); cause != nil {
+			return "", cause
+		}
 		if errors.Is(err, context.Canceled) {
 			return "", err
 		}
 		return "", &runtimeError{msg: err.Error()}
 	}
 	defer resp.Body.Close()
+	bodyReader := idleResponseReader{reader: resp.Body, timeout: config.Timeout, ctx: reqCtx, cancel: cancel}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		body, _ := io.ReadAll(io.LimitReader(bodyReader, 4096))
 		return "", &runtimeError{msg: fmt.Sprintf("Responses API status %d: %s", resp.StatusCode, bytes.TrimSpace(body))}
 	}
 	var text strings.Builder
-	if err := consumeSSE(resp.Body, func(data string) error {
+	if err := consumeSSE(bodyReader, func(data string) error {
 		return applyStreamEvent(data, &text)
 	}); err != nil {
 		return "", err
@@ -208,6 +216,25 @@ func (g *OpenAISummaryGenerator) streamText(ctx context.Context, config SummaryM
 		return "", &retryableResponseError{msg: "Responses API did not return output text"}
 	}
 	return text.String(), nil
+}
+
+// idleResponseReader has no background goroutine after a Read completes. A
+// blocked HTTP read is released by canceling its request, including error bodies.
+type idleResponseReader struct {
+	reader  io.Reader
+	timeout time.Duration
+	ctx     context.Context
+	cancel  context.CancelCauseFunc
+}
+
+func (r idleResponseReader) Read(p []byte) (int, error) {
+	timer := time.AfterFunc(r.timeout, func() { r.cancel(context.DeadlineExceeded) })
+	n, err := r.reader.Read(p)
+	timer.Stop()
+	if cause := context.Cause(r.ctx); cause != nil {
+		return n, cause
+	}
+	return n, err
 }
 
 func consumeSSE(r io.Reader, fn func(string) error) error {
@@ -260,7 +287,7 @@ func consumeSSE(r io.Reader, fn func(string) error) error {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		if errors.Is(err, context.Canceled) {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err
 		}
 		return &runtimeError{msg: err.Error()}
