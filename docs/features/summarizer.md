@@ -1,6 +1,6 @@
 # Summarizer
 
-Summarizer 是独立的消息总结功能。它拥有自己的模型、端口、Telegram/模型适配器、SQLite 表、
+Summarizer 是独立的 Go 消息总结功能，位于 `internal/features/summarizer`。它拥有自己的模型、端口、Telegram/模型适配器、PostgreSQL 表、
 命令和运行时开关，不读取 Forwarder 的表，也不依赖 Forwarder 的实现。
 
 ## Commands
@@ -43,7 +43,7 @@ https://t.me/public_group/42
 
 ## Model Configuration
 
-模型调用只使用官方 OpenAI Responses SDK。OpenAI 兼容服务统一配置为 `provider=openai`，并通过
+模型调用使用 Responses HTTP/SSE 接口，不依赖 Python SDK。OpenAI 兼容服务统一配置为 `provider=openai`，并通过
 `base-url` 指定服务地址。模型配置属于 Summarizer 业务数据，通过命令写入
 `summarizer_model_config`，不使用环境变量。未配置模型时仍可增删和查看规则，执行 `/summary run`
 时会返回明确的缺少配置提示。`model show` 只显示 API key 是否存在，不回显原值。
@@ -71,6 +71,7 @@ APIArc 同样使用通用 OpenAI 配置，模型名不要添加 provider 前缀�
 
 所有请求都使用 Responses SSE 并持续消费事件；模型配置中的 `timeout` 是连续无网络数据的读取
 超时，服务端心跳或输出数据会刷新该超时，不限制一次总结的总生成时间。
+调用方取消或显式总时限仍然有效。单个 SSE 事件、累计输出和总响应流另有大小限制，不能通过持续心跳绕过资源边界。
 
 推理参数也通过业务命令调整：
 
