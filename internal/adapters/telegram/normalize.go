@@ -189,7 +189,11 @@ func pollText(message *tg.Message) string {
 	}
 	options := make([]string, 0, len(pollMedia.Poll.Answers))
 	for _, answer := range pollMedia.Poll.Answers {
-		text := strings.TrimSpace(answer.Text.Text)
+		received, ok := answer.(*tg.PollAnswer)
+		if !ok || received == nil {
+			continue
+		}
+		text := strings.TrimSpace(received.Text.Text)
 		if text != "" {
 			options = append(options, text)
 		}

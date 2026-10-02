@@ -16,9 +16,13 @@ func TestNormalizePollText(t *testing.T) {
 	}
 	message.SetMedia(&tg.MessageMediaPoll{Poll: tg.Poll{
 		Question: tg.TextWithEntities{Text: "问题"},
-		Answers: []tg.PollAnswer{
-			{Text: tg.TextWithEntities{Text: "甲"}},
-			{Text: tg.TextWithEntities{Text: "乙"}},
+		Answers: []tg.PollAnswerClass{
+			&tg.PollAnswer{Text: tg.TextWithEntities{Text: "甲"}},
+			nil,
+			(*tg.PollAnswer)(nil),
+			&tg.InputPollAnswer{Text: tg.TextWithEntities{Text: "not a received answer"}},
+			&tg.PollAnswer{Text: tg.TextWithEntities{Text: " "}},
+			&tg.PollAnswer{Text: tg.TextWithEntities{Text: "乙"}},
 		},
 	}})
 	got, ok := Normalize(message, time.Unix(10, 0).UTC())

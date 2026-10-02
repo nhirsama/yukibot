@@ -9,6 +9,7 @@ import (
 	"github.com/gotd/td/constant"
 	"github.com/gotd/td/telegram/peers"
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
 
 	"github.com/nhirsama/yukibot/internal/adapters/telegram"
 	"github.com/nhirsama/yukibot/internal/features/forwarder"
@@ -92,9 +93,9 @@ func (g *Gateway) topicTitle(ctx context.Context, source forwarder.SourceEndpoin
 		if !isChannel {
 			return nil
 		}
-		box, err := api.ChannelsGetForumTopicsByID(ctx, &tg.ChannelsGetForumTopicsByIDRequest{
-			Channel: channel.InputChannel(),
-			Topics:  []int{topicID},
+		box, err := api.MessagesGetForumTopicsByID(ctx, &tg.MessagesGetForumTopicsByIDRequest{
+			Peer:   channel.InputPeer(),
+			Topics: []int{topicID},
 		})
 		if err != nil || box == nil {
 			return err
@@ -384,8 +385,8 @@ func (g *Gateway) CreateForumTopic(ctx context.Context, destinationChatID int64,
 		if !ok {
 			return forwarder.NewPermanentDeliveryError(fmt.Sprintf("chat %d is not a forum channel", destinationChatID))
 		}
-		updates, err := api.ChannelsCreateForumTopic(ctx, &tg.ChannelsCreateForumTopicRequest{
-			Channel:  channel.InputChannel(),
+		updates, err := api.MessagesCreateForumTopic(ctx, &tg.MessagesCreateForumTopicRequest{
+			Peer:     channel.InputPeer(),
 			Title:    title,
 			RandomID: randomID,
 		})
@@ -421,11 +422,11 @@ func (g *Gateway) EditForumTopic(ctx context.Context, destinationChatID int64, t
 		if !ok {
 			return forwarder.NewPermanentDeliveryError(fmt.Sprintf("chat %d is not a forum channel", destinationChatID))
 		}
-		request := &tg.ChannelsEditForumTopicRequest{Channel: channel.InputChannel(), TopicID: topicID}
+		request := &tg.MessagesEditForumTopicRequest{Peer: channel.InputPeer(), TopicID: topicID}
 		request.SetTitle(title)
-		updates, err := api.ChannelsEditForumTopic(ctx, request)
+		updates, err := api.MessagesEditForumTopic(ctx, request)
 		if err != nil {
-			if tg.IsTopicNotModified(err) {
+			if tgerr.Is(err, "TOPIC_NOT_MODIFIED") {
 				return nil
 			}
 			return err
