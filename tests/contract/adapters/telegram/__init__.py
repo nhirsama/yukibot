@@ -1,1 +1,0 @@
-"""Telethon adapter contract tests."""
