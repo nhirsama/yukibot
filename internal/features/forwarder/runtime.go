@@ -11,8 +11,9 @@ type EventSubscription interface {
 	Unsubscribe()
 }
 
-// EventPublisher is the in-process bus the feature and poller use.
-// The composition root adapts the kernel event bus to this interface.
+// EventPublisher exposes feature subscriptions and acknowledged publication.
+// The composition root gives pollers a queued publisher: Publish returns only
+// after delivery, so they may safely save their cursor on success.
 type EventPublisher interface {
 	SubscribeReceived(handler func(context.Context, contracts.TelegramMessageReceived) error) (EventSubscription, error)
 	SubscribeEdited(handler func(context.Context, contracts.TelegramMessageEdited) error) (EventSubscription, error)

@@ -27,17 +27,11 @@ type TaskStarter interface {
 	Go(name string, critical bool, fn func(context.Context) error) (RunningTask, error)
 }
 
-// Router consumes recognized commands before they are published.
-type Router interface {
-	Route(ctx context.Context, message contracts.TelegramMessage, execute bool) (bool, error)
-}
-
 // EventSource is the update pump. Handlers are registered at construction, before Run.
 type EventSource struct {
 	client  *Client
 	publish Publisher
 	tasks   TaskStarter
-	router  Router
 	drain   time.Duration
 
 	mu        sync.Mutex
@@ -48,11 +42,11 @@ type EventSource struct {
 }
 
 // NewEventSource registers user and channel new, edit, and delete handlers.
-func NewEventSource(client *Client, publish Publisher, tasks TaskStarter, router Router, drain time.Duration) *EventSource {
+func NewEventSource(client *Client, publish Publisher, tasks TaskStarter, drain time.Duration) *EventSource {
 	if drain <= 0 {
 		drain = 15 * time.Second
 	}
-	source := &EventSource{client: client, publish: publish, tasks: tasks, router: router, drain: drain}
+	source := &EventSource{client: client, publish: publish, tasks: tasks, drain: drain}
 	if client != nil && client.Dispatcher() != nil {
 		disp := client.Dispatcher()
 		disp.OnNewMessage(func(ctx context.Context, entities tg.Entities, update *tg.UpdateNewMessage) error {
@@ -152,10 +146,9 @@ func (s *EventSource) watch(ctx context.Context) error {
 }
 
 func (s *EventSource) onMessage(ctx context.Context, entities tg.Entities, message tg.MessageClass, edited bool) error {
-	if !s.isAccepting() {
+	if !s.beginEvent() {
 		return nil
 	}
-	s.inflight.Add(1)
 	defer s.inflight.Done()
 	if s.client != nil {
 		s.client.Observe(ctx, entities)
@@ -167,15 +160,6 @@ func (s *EventSource) onMessage(ctx context.Context, entities tg.Entities, messa
 	if err := normalized.Validate(); err != nil {
 		return nil
 	}
-	if s.router != nil {
-		consumed, err := s.router.Route(ctx, normalized, !edited)
-		if err != nil {
-			return err
-		}
-		if consumed {
-			return nil
-		}
-	}
 	if s.publish == nil {
 		return nil
 	}
@@ -186,10 +170,9 @@ func (s *EventSource) onMessage(ctx context.Context, entities tg.Entities, messa
 }
 
 func (s *EventSource) onDelete(ctx context.Context, chatID *int64, ids []int) error {
-	if !s.isAccepting() || len(ids) == 0 || s.publish == nil {
+	if len(ids) == 0 || s.publish == nil || !s.beginEvent() {
 		return nil
 	}
-	s.inflight.Add(1)
 	defer s.inflight.Done()
 	event := contracts.TelegramMessagesDeleted{
 		MessageIDs: append([]int(nil), ids...),
@@ -202,8 +185,14 @@ func (s *EventSource) onDelete(ctx context.Context, chatID *int64, ids []int) er
 	return s.publish.Publish(ctx, event)
 }
 
-func (s *EventSource) isAccepting() bool {
+// Admission and WaitGroup.Add share the shutdown lock: Stop cannot start
+// waiting between the acceptance check and registration of an in-flight event.
+func (s *EventSource) beginEvent() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.accepting
+	if !s.accepting {
+		return false
+	}
+	s.inflight.Add(1)
+	return true
 }

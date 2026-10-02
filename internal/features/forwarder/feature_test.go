@@ -9,6 +9,28 @@ import (
 	"github.com/nhirsama/yukibot/internal/contracts"
 )
 
+type cancelBeforeJoinTask struct {
+	canceled      bool
+	waitSawCancel bool
+}
+
+func (t *cancelBeforeJoinTask) Cancel() { t.canceled = true }
+func (t *cancelBeforeJoinTask) Wait(context.Context) error {
+	t.waitSawCancel = t.canceled
+	return nil
+}
+
+func TestFeatureCancelsPollerBeforeJoiningFromCommandStream(t *testing.T) {
+	task := &cancelBeforeJoinTask{}
+	feature := &ForwarderFeature{pollTask: task, stopTimeout: time.Second}
+	if err := feature.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !task.waitSawCancel {
+		t.Fatal("module disable can deadlock waiting for queued history")
+	}
+}
+
 type featureRunner struct {
 	mu        sync.Mutex
 	recovered int

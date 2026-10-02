@@ -17,6 +17,10 @@ yukibot 是一个基于 Python 3.12、Telethon 1.44 和 SQLite 的模块化 Tele
 [`src/yukibot/features/forwarder/README.md`](src/yukibot/features/forwarder/README.md) 和
 [`src/yukibot/features/summarizer/README.md`](src/yukibot/features/summarizer/README.md)。
 
+当前 Go 运行时的统一消息队列、订阅分发和单一鉴权边界见
+[`docs/message-stream.md`](docs/message-stream.md)。实时更新和历史轮询共用入口队列，只有实时控制命令
+在分发端经过一次鉴权；历史文本不会被当成控制命令执行。
+
 ## Run
 
 ```bash

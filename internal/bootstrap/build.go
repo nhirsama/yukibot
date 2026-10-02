@@ -43,6 +43,10 @@ func assemble(settings config.Settings) (*kernel.Application, *telegram.Client, 
 	client := telegram.NewClient(settings.TelegramAPIID, settings.TelegramAPIHash, settings.TelegramSessionPath, telegram.NewRequestLimiter(), identity)
 	bus := busAdapter{bus: kernel.NewEventBus(logger)}
 	supervisor := kernel.NewTaskSupervisor(logger)
+	stream, err := kernel.NewMessageStream(256, settings.ShutdownTimeout, supervisor, logger)
+	if err != nil {
+		return nil, nil, err
+	}
 	registry := kernel.NewCommandRegistry()
 
 	forwardRepository := fwdrepo.NewRepository(db)
@@ -91,7 +95,7 @@ func assemble(settings config.Settings) (*kernel.Application, *telegram.Client, 
 		fwdrepo.Routes{Repository: forwardRepository},
 		fwdrepo.Cursors{Repository: forwardRepository},
 		gateway,
-		bus,
+		queuedPublisher{busAdapter: bus, stream: stream, origin: contracts.OriginHistory},
 		forwarder.SourcePollerConfig{Logger: logger},
 	)
 	if err != nil {
@@ -125,8 +129,18 @@ func assemble(settings config.Settings) (*kernel.Application, *telegram.Client, 
 		return nil, nil, err
 	}
 	managementService := management.NewService(managementRepository, moduleAdapter{modules: modules}, identity)
-	dispatcher := kernel.NewCommandDispatcher(registry, managementService, managementRepository, logger)
-	eventSource := telegram.NewEventSource(client, bus, telegramTasks{supervisor: supervisor}, telegram.NewCommandRouter(commandPlane{dispatcher: dispatcher}, client, logger), settings.ShutdownTimeout)
+	authorizer := management.NewAuthorizer(managementRepository, identity)
+	dispatcher := kernel.NewCommandDispatcher(registry, authorizer, managementRepository, logger)
+	router := telegram.NewCommandRouter(commandPlane{dispatcher: dispatcher}, telegram.NewCommandReplySender(client), logger)
+	if err := stream.Subscribe("control", router.HandleEvent); err != nil {
+		return nil, nil, err
+	}
+	if err := stream.Subscribe("features", distributeMessages(bus.bus)); err != nil {
+		return nil, nil, err
+	}
+	eventSource := telegram.NewEventSource(client,
+		queuedPublisher{busAdapter: bus, stream: stream, origin: contracts.OriginLive},
+		telegramTasks{supervisor: supervisor}, settings.ShutdownTimeout)
 
 	lifecycle, err := kernel.NewLifecycleManager([]kernel.Feature{
 		databaseFeature,
@@ -134,6 +148,7 @@ func assemble(settings config.Settings) (*kernel.Application, *telegram.Client, 
 		kernel.NewSupervisorLifecycle(supervisor, settings.ShutdownTimeout),
 		management.NewFeature(registry, management.NewCommands(managementService)),
 		modules,
+		stream,
 		eventSource,
 	}, logger)
 	if err != nil {

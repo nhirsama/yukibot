@@ -64,9 +64,15 @@ func TestAdminCommands(t *testing.T) {
 	if err != nil || text(t, removed) != "Administrator 123 is removed." {
 		t.Fatalf("remove %q %v", text(t, removed), err)
 	}
-	denied, err := commands.Handle(ctx, command(incoming, "admin add 5"))
-	if err != nil || text(t, denied) != "administrator permission is required" {
-		t.Fatalf("denied %q %v", text(t, denied), err)
+	registry := kernel.NewCommandRegistry()
+	_, err = registry.Register("/admin", "", "", commands.Handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatcher := kernel.NewCommandDispatcher(registry, NewAuthorizer(repository, Owner{ID: 999}), repository, nil)
+	denied, err := dispatcher.Dispatch(ctx, "/admin admin add 5", incoming.ChatID, 12, incoming.ActorID, false)
+	if err != nil || denied.Response == nil || *denied.Response != "Permission denied." {
+		t.Fatalf("denied %+v %v", denied, err)
 	}
 	ownerRemove, err := commands.Handle(ctx, command(outgoing, "admin remove 999"))
 	if err != nil || text(t, ownerRemove) != "the current account owner cannot be removed" {

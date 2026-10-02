@@ -45,24 +45,25 @@ func TestOutgoingIsAuthorizedAndOwnerIsNotStored(t *testing.T) {
 	ctx := context.Background()
 	repository := NewMemoryRepository(Owner{ID: 999})
 	service := NewService(repository, &fakeModules{}, Owner{ID: 999})
+	authorizer := NewAuthorizer(repository, Owner{ID: 999})
 	ownerCommand := kernel.ControlCommand{Outgoing: true, ActorID: ptr(int64(111))}
 	incomingOwner := kernel.ControlCommand{ActorID: ptr(int64(999))}
 	delegated := kernel.ControlCommand{ActorID: ptr(int64(123))}
 	anonymous := kernel.ControlCommand{}
 
-	authorized, err := service.IsAuthorized(ctx, ownerCommand)
+	authorized, err := authorizer.IsAuthorized(ctx, ownerCommand)
 	if err != nil || !authorized {
 		t.Fatalf("outgoing %v %v", authorized, err)
 	}
-	authorized, err = service.IsAuthorized(ctx, incomingOwner)
+	authorized, err = authorizer.IsAuthorized(ctx, incomingOwner)
 	if err != nil || !authorized {
 		t.Fatalf("owner must be authorized independently of outgoing: %v %v", authorized, err)
 	}
-	authorized, err = service.IsAuthorized(ctx, delegated)
+	authorized, err = authorizer.IsAuthorized(ctx, delegated)
 	if err != nil || authorized {
 		t.Fatalf("delegated before add %v %v", authorized, err)
 	}
-	authorized, err = service.IsAuthorized(ctx, anonymous)
+	authorized, err = authorizer.IsAuthorized(ctx, anonymous)
 	if err != nil || authorized {
 		t.Fatalf("anonymous %v %v", authorized, err)
 	}
@@ -77,7 +78,7 @@ func TestOutgoingIsAuthorizedAndOwnerIsNotStored(t *testing.T) {
 	if err != nil || !ok || grantedBy != 999 {
 		t.Fatalf("outgoing grant attributed to owner %d %v %v", grantedBy, ok, err)
 	}
-	authorized, err = service.IsAuthorized(ctx, delegated)
+	authorized, err = authorizer.IsAuthorized(ctx, delegated)
 	if err != nil || !authorized {
 		t.Fatalf("delegated after add %v %v", authorized, err)
 	}
@@ -123,11 +124,18 @@ func TestOutgoingIsAuthorizedAndOwnerIsNotStored(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stranger := kernel.ControlCommand{ActorID: ptr(int64(8))}
-	err = service.AddAdmin(ctx, stranger, 9)
-	var permission *PermissionError
-	if !errors.As(err, &permission) || permission.Error() != "administrator permission is required" {
-		t.Fatalf("permission %v", err)
+	registry := kernel.NewCommandRegistry()
+	_, err = registry.Register("/admin", "", "", NewCommands(service).Handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatcher := kernel.NewCommandDispatcher(registry, authorizer, repository, nil)
+	result, err := dispatcher.Dispatch(ctx, "/admin admin add 9", 8, 1, ptr(8), false)
+	if err != nil || result.Response == nil || *result.Response != "Permission denied." {
+		t.Fatalf("permission %v %v", result, err)
+	}
+	if stored, err := repository.IsAdmin(ctx, 9); err != nil || stored {
+		t.Fatalf("unauthorized mutation: %v %v", stored, err)
 	}
 }
 
@@ -149,11 +157,12 @@ func TestListAdminsOmitsStoredOwner(t *testing.T) {
 
 func TestServiceUnavailableIdentity(t *testing.T) {
 	service := NewService(NewMemoryRepository(Owner{}), &fakeModules{}, Owner{})
+	authorizer := NewAuthorizer(NewMemoryRepository(Owner{}), Owner{})
 	_, _, err := service.ListAdmins(context.Background())
 	if err == nil || err.Error() != "Telegram account identity is not available" {
 		t.Fatalf("list %v", err)
 	}
-	allowed, err := service.IsAuthorized(context.Background(), kernel.ControlCommand{ActorID: ptr(123)})
+	allowed, err := authorizer.IsAuthorized(context.Background(), kernel.ControlCommand{ActorID: ptr(123)})
 	if err == nil || allowed {
 		t.Fatalf("incoming command with unavailable identity: %v %v", allowed, err)
 	}
@@ -162,13 +171,13 @@ func TestServiceUnavailableIdentity(t *testing.T) {
 func TestAuthorizationRejectsInvalidActorsAndRevokedAdmins(t *testing.T) {
 	ctx := context.Background()
 	repository := NewMemoryRepository(Owner{ID: 999})
-	service := NewService(repository, nil, Owner{ID: 999})
+	authorizer := NewAuthorizer(repository, Owner{ID: 999})
 	for _, id := range []int64{0, -123} {
 		// Even a malformed persisted row must not authorize an invalid actor.
 		if err := repository.AddAdmin(ctx, id, 999); err != nil {
 			t.Fatal(err)
 		}
-		allowed, err := service.IsAuthorized(ctx, kernel.ControlCommand{ActorID: ptr(id)})
+		allowed, err := authorizer.IsAuthorized(ctx, kernel.ControlCommand{ActorID: ptr(id)})
 		if err != nil || allowed {
 			t.Fatalf("invalid actor %d: %v %v", id, allowed, err)
 		}
@@ -177,20 +186,20 @@ func TestAuthorizationRejectsInvalidActorsAndRevokedAdmins(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := kernel.ControlCommand{ActorID: ptr(123)}
-	allowed, err := service.IsAuthorized(ctx, command)
+	allowed, err := authorizer.IsAuthorized(ctx, command)
 	if err != nil || !allowed {
 		t.Fatalf("registered admin: %v %v", allowed, err)
 	}
 	if err := repository.RemoveAdmin(ctx, 123); err != nil {
 		t.Fatal(err)
 	}
-	allowed, err = service.IsAuthorized(ctx, command)
+	allowed, err = authorizer.IsAuthorized(ctx, command)
 	if err != nil || allowed {
 		t.Fatalf("revoked admin: %v %v", allowed, err)
 	}
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	allowed, err = service.IsAuthorized(canceled, kernel.ControlCommand{Outgoing: true})
+	allowed, err = authorizer.IsAuthorized(canceled, kernel.ControlCommand{Outgoing: true})
 	if allowed || !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled command: %v %v", allowed, err)
 	}

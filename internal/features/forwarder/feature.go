@@ -186,6 +186,10 @@ func (f *ForwarderFeature) shutdown(ctx context.Context) {
 		if f.poller != nil {
 			f.poller.RequestStop()
 		}
+		// A poller may be awaiting delivery on the same ingress stream that
+		// is currently executing /admin module disable forwarder. Cancel its
+		// wait before joining it, otherwise the consumer would wait on itself.
+		f.pollTask.Cancel()
 		f.waitTask(ctx, f.pollTask, "forwarder source poller did not stop before timeout")
 		f.pollTask = nil
 	}

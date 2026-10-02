@@ -1,6 +1,7 @@
 package architecture
 
 import (
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
@@ -8,6 +9,44 @@ import (
 	"strings"
 	"testing"
 )
+
+// Authorization belongs to one dispatcher boundary, not producer-, role- or
+// feature-specific execution paths. Tests may exercise the policy directly.
+func TestSingleCommandAuthorizationBoundary(t *testing.T) {
+	root := moduleRoot(t)
+	var callers []string
+	err := filepath.WalkDir(filepath.Join(root, "internal"), func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			return err
+		}
+		ast.Inspect(file, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			selector, ok := call.Fun.(*ast.SelectorExpr)
+			if ok && selector.Sel.Name == "IsAuthorized" {
+				relative, _ := filepath.Rel(root, path)
+				callers = append(callers, filepath.ToSlash(relative))
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(callers) != 1 || callers[0] != "internal/kernel/control.go" {
+		t.Fatalf("authorization must run only in the command dispatcher: %v", callers)
+	}
+}
 
 func TestImportBoundaries(t *testing.T) {
 	root := moduleRoot(t)

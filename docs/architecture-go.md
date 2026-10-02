@@ -24,6 +24,9 @@ Python 树继续留在仓库里，作为行为参照。Go 模块在仓库根目�
 | 依赖注入 | 手工组合根 `internal/bootstrap` | 不引入 DI 框架，不扫描插件 |
 | 迁移 | 自有 checksum runner | 继续按功能 scope 版本化，不用 bun/Atlas 替换这套不变量 |
 
+统一入口与鉴权链路现以 [`message-stream.md`](message-stream.md) 为准。
+消息接收不再在入队前执行命令，所有命令根在队列分发端使用同一授权策略。
+
 ## 2. 等价约定
 
 「完全等价」指可观察行为与 Python 实现一致，而不是字节级复刻 SQLite DDL。

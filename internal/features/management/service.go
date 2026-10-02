@@ -6,43 +6,20 @@ import (
 	"github.com/nhirsama/yukibot/internal/kernel"
 )
 
-// Service authorizes control commands and changes administrators and modules.
+// Service changes administrators and modules behind the authorized dispatcher.
+// Like the other feature services, it is a trusted in-process business API, not
+// an authorization entry point. Every external command must use the dispatcher.
 type Service struct {
 	admins   AdminStore
 	modules  Modules
 	identity Identity
 }
 
-var _ kernel.CommandAuthorizer = (*Service)(nil)
-
 // NewService returns the management use cases.
 // admins, modules, and identity may be used immediately and must be non-nil
 // for the operations that need them.
 func NewService(admins AdminStore, modules Modules, identity Identity) *Service {
 	return &Service{admins: admins, modules: modules, identity: identity}
-}
-
-// IsAuthorized allows every outgoing command.
-// Incoming commands must identify the authenticated owner or a stored admin.
-// The owner need not be stored and does not depend on the Telegram out flag.
-func (s *Service) IsAuthorized(ctx context.Context, command kernel.ControlCommand) (bool, error) {
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
-	if command.Outgoing {
-		return true, nil
-	}
-	if command.ActorID == nil || *command.ActorID <= 0 {
-		return false, nil
-	}
-	owner, err := s.ownerID()
-	if err != nil {
-		return false, err
-	}
-	if *command.ActorID == owner {
-		return true, nil
-	}
-	return s.admins.IsAdmin(ctx, *command.ActorID)
 }
 
 // ListAdmins returns the account owner and delegated administrators.
@@ -76,9 +53,6 @@ func (s *Service) AddAdmin(ctx context.Context, command kernel.ControlCommand, u
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := s.requireAdmin(ctx, command); err != nil {
-		return err
-	}
 	if userID <= 0 {
 		return &ValueError{Message: "administrator user ID must be positive"}
 	}
@@ -103,9 +77,6 @@ func (s *Service) AddAdmin(ctx context.Context, command kernel.ControlCommand, u
 // The account owner cannot be removed. A non-positive user ID is rejected.
 func (s *Service) RemoveAdmin(ctx context.Context, command kernel.ControlCommand, userID int64) error {
 	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := s.requireAdmin(ctx, command); err != nil {
 		return err
 	}
 	if userID <= 0 {
@@ -143,17 +114,6 @@ func (s *Service) DisableModule(ctx context.Context, name string) (ModuleStatus,
 		return ModuleStatus{}, err
 	}
 	return s.modules.Disable(ctx, name)
-}
-
-func (s *Service) requireAdmin(ctx context.Context, command kernel.ControlCommand) error {
-	ok, err := s.IsAuthorized(ctx, command)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return &PermissionError{}
-	}
-	return nil
 }
 
 func (s *Service) ownerID() (int64, error) {

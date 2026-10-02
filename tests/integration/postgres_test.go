@@ -315,7 +315,7 @@ func testRepositories(t *testing.T, ctx context.Context, db *database.DB) {
 	if !isAdmin {
 		fail(t, "admin was not stored")
 	}
-	authorization := management.NewService(admins, nil, management.Owner{ID: accountID})
+	authorization := management.NewAuthorizer(admins, management.Owner{ID: accountID})
 	ownerActor, adminActor := accountID, adminID
 	for _, actor := range []*int64{&ownerActor, &adminActor} {
 		allowed, err := authorization.IsAuthorized(ctx, kernel.ControlCommand{ActorID: actor})

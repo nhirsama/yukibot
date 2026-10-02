@@ -59,7 +59,7 @@ func TestRouteAddAuthorization(t *testing.T) {
 				return kernel.TextResult(result.Text), err
 			})
 			must(t, err)
-			dispatcher := kernel.NewCommandDispatcher(registry, management.NewService(admins, nil, owner), admins, nil)
+			dispatcher := kernel.NewCommandDispatcher(registry, management.NewAuthorizer(admins, owner), admins, nil)
 			raw := &tg.Message{
 				ID: 1, PeerID: tc.peer, FromID: tc.from, Out: tc.out,
 				Message: "/route add -1001 -2001",

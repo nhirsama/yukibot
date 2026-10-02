@@ -30,20 +30,43 @@ type CommandPlane interface {
 
 // CommandRouter delivers command replies and swallows the bot's own responses.
 type CommandRouter struct {
-	plane  CommandPlane
-	client *Client
-	log    *slog.Logger
-	mu     sync.Mutex
-	seen   map[[2]int64]struct{}
-	order  [][2]int64
+	plane   CommandPlane
+	replies CommandReplySender
+	log     *slog.Logger
+	mu      sync.Mutex
+	seen    map[[2]int64]struct{}
+	order   [][2]int64
 }
 
 // NewCommandRouter returns a router. A nil logger discards records.
-func NewCommandRouter(plane CommandPlane, client *Client, logger *slog.Logger) *CommandRouter {
+func NewCommandRouter(plane CommandPlane, replies CommandReplySender, logger *slog.Logger) *CommandRouter {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
-	return &CommandRouter{plane: plane, client: client, log: logger, seen: map[[2]int64]struct{}{}}
+	return &CommandRouter{plane: plane, replies: replies, log: logger, seen: map[[2]int64]struct{}{}}
+}
+
+// HandleEvent is the first stream subscriber. Historical data never executes
+// commands; edits can be consumed but never re-execute the original command.
+func (r *CommandRouter) HandleEvent(ctx context.Context, event any) (bool, error) {
+	envelope, ok := event.(contracts.TelegramEventEnvelope)
+	if !ok {
+		return true, fmt.Errorf("expected a Telegram event envelope")
+	}
+	switch envelope.Origin {
+	case contracts.OriginHistory:
+		return false, nil
+	case contracts.OriginLive:
+		switch message := envelope.Event.(type) {
+		case contracts.TelegramMessageReceived:
+			return r.Route(ctx, message.Message, true)
+		case contracts.TelegramMessageEdited:
+			return r.Route(ctx, message.Message, false)
+		case contracts.TelegramMessagesDeleted:
+			return false, nil
+		}
+	}
+	return true, fmt.Errorf("invalid Telegram stream event")
 }
 
 // Route reports whether the message was consumed by the control plane.
@@ -53,7 +76,9 @@ func (r *CommandRouter) Route(ctx context.Context, message contracts.TelegramMes
 		return false, nil
 	}
 	key := [2]int64{message.Ref.ChatID, int64(message.Ref.MessageID)}
-	if message.Outgoing && r.seenResponse(key) {
+	// The sent-message receipt is authoritative even when Saved Messages
+	// omits the outgoing flag.
+	if r.seenResponse(key) {
 		r.log.Info("telegram control response consumed", "chat_id", message.Ref.ChatID, "message_id", message.Ref.MessageID)
 		return true, nil
 	}
@@ -78,7 +103,10 @@ func (r *CommandRouter) Route(ctx context.Context, message contracts.TelegramMes
 		"has_response", outcome.Response != nil && *outcome.Response != "",
 	)
 	if outcome.Response != nil && *outcome.Response != "" {
-		sentID, err := r.reply(ctx, message, *outcome.Response)
+		if r.replies == nil {
+			return true, fmt.Errorf("command reply sender is not configured")
+		}
+		sentID, err := r.replies.Reply(ctx, message, *outcome.Response)
 		if err != nil {
 			return true, err
 		}
@@ -93,7 +121,18 @@ func (r *CommandRouter) Route(ctx context.Context, message contracts.TelegramMes
 	return true, nil
 }
 
-func (r *CommandRouter) reply(ctx context.Context, message contracts.TelegramMessage, text string) (int, error) {
+// CommandReplySender keeps the stream subscriber independent of RPC delivery.
+type CommandReplySender interface {
+	Reply(context.Context, contracts.TelegramMessage, string) (int, error)
+}
+
+type commandReplySender struct{ client *Client }
+
+func NewCommandReplySender(client *Client) CommandReplySender {
+	return &commandReplySender{client: client}
+}
+
+func (r *commandReplySender) Reply(ctx context.Context, message contracts.TelegramMessage, text string) (int, error) {
 	api, err := r.client.API()
 	if err != nil {
 		return 0, err

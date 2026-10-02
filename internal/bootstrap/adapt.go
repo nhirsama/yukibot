@@ -10,7 +10,8 @@ import (
 	"github.com/nhirsama/yukibot/internal/kernel"
 )
 
-// busAdapter serves the forwarder publisher and the telegram event source.
+// busAdapter serves downstream domain subscriptions. Ingress producers use
+// queuedPublisher so they cannot run feature handlers on the receive callback.
 type busAdapter struct {
 	bus *kernel.EventBus
 }
