@@ -76,6 +76,7 @@ jobs:
           images: ${{ steps.image.outputs.name }}
           tags: |
             type=ref,event=tag
+            type=raw,value=latest
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
