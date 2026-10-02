@@ -1,12 +1,12 @@
 # yukibot Go 架构
 
-> 状态：目标实现。行为以当前 Python 实现和 `docs/architecture.md` 为准，技术选型以本次迁移决定为准。
+> 状态：当前运行实现。关键行为参照冻结的 Python 基准，必要差异见 `docs/python-retirement.md`。
 > 语言：Go（单静态二进制，`CGO_ENABLED=0`）
 > Telegram：`gotd/td`（MTProto 用户账号，不是 Bot API）
 > 数据库：仅 PostgreSQL，查询由 sqlc 生成
 > 形态：模块化单体、端口与适配器、功能纵向切片、显式组合根
 
-Python 树继续留在仓库里，作为行为参照。Go 模块在仓库根目录（`go.mod`），不与 `src/yukibot` 混放。
+Go 模块在仓库根目录（`go.mod`）。原 Python 运行时已经移除，行为参照保存在 Git 历史与 `tests/parity/testdata`，常规构建和测试不需要 Python。
 
 ## 1. 已确定的选型
 
@@ -29,7 +29,7 @@ Python 树继续留在仓库里，作为行为参照。Go 模块在仓库根目�
 
 ## 2. 等价约定
 
-「完全等价」指可观察行为与 Python 实现一致，而不是字节级复刻 SQLite DDL。
+迁移以关键可观察业务行为为参照，不逐字复刻 SQLite DDL、SDK 错误对象或已修复的旧 bug。已知差异与未进行的真实账号验证必须明确记录，不以测试通过宣称全输入等价。
 
 必须保持不变的部分：
 
@@ -39,7 +39,7 @@ Python 树继续留在仓库里，作为行为参照。Go 模块在仓库根目�
 - 任务领取的队头阻塞：最小 `id` 的 `pending` 任务如果 `available_at` 未到，本次领取为空，即使更大的 id 已到期。这是现有单 worker 语义。PostgreSQL 在该事务里对选中行 `FOR UPDATE`，但**不用** `SKIP LOCKED` 跳过未到期的队头，否则会改变顺序。
 - 成功任务删除行，而不是写成 `succeeded`。失败任务保留 `last_error`。
 - 总结的分批、合并、提示词版本 2、渲染和 3900 字符切分。
-- 管理员规则：outgoing 命令始终放行；当前登录账号不能被删除；管理模块本身不可关闭。
+- 管理员规则：单一 dispatcher 授权；按稳定账号 ID 识别 owner，并兼容 outgoing 命令；当前登录账号不能被删除；管理模块本身不可关闭。
 
 有意不同的部分：
 
@@ -97,7 +97,7 @@ sqlc.yaml
 
 ## 5. 内核
 
-语义与 Python `src/yukibot/kernel` 一致。
+核心生命周期与任务监管继承旧实现的契约；统一入口消息队列与单一鉴权边界是后续已合并的改进。
 
 - `Feature`：`Name`、`Start`、`Stop`。
 - `LifecycleManager` 状态：`new → starting → running → stopping → stopped`，失败进入 `failed`。重复名字在构造时失败。`start` 只允许从 `new` 进入；`running` 上再次 `start` 是空操作。失败时按启动逆序回滚。`stop` 逆序，单个 `Exception` 不阻断其余项，最后聚合成 `LifecycleStopError`。
@@ -151,7 +151,7 @@ sqlc.yaml
 
 功能不接触 `tg.*` 对象。Forwarder 与 Summarizer 各自在 `infra` 里实现本地端口：解析引用、邀请链接加入、论坛话题、原生转发及复制回退、历史拉取、FloodWait 转成 `RetryAfter`。永久 RPC 错误转成 `PermanentDeliveryError`。网络错误转成 `RetryAfter(1s)`。
 
-更新泵在规范化之后先走控制面。已消费的命令不发布 `TelegramMessageReceived`。命令编辑只识别、不执行。删除事件发布 `TelegramMessagesDeleted`。
+更新泵规范化后先进入统一队列，控制订阅者在消费端执行命令识别与唯一鉴权，再分发普通功能事件。已消费的命令不进入转发流；命令编辑只识别、不执行；历史消息不会执行命令。
 
 登录：`connect` → 已授权则 `get_me` 并填充 peer；否则交互式登录。启动失败时断开并清空身份。
 
@@ -159,13 +159,13 @@ sqlc.yaml
 
 ### 8.1 Forwarder
 
-职责、模型和流程与 `docs/architecture.md` 第 8 节以及 Python 包一致：路由、过滤、原生转发/复制回退、自动话题、相册、回复映射、编辑和删除同步、轮询游标、成员关系重建。handler 只入队，worker 发送。
+职责包含路由、过滤、原生转发/复制回退、自动话题、相册、回复映射、编辑和删除同步能力、轮询游标及成员关系重建。handler 只入队，worker 发送。应用组合根当前关闭删除同步，见 `docs/features/forwarder.md`。
 
 命令根 `/route`。停用模块时注销命令。
 
 ### 8.2 Summarizer
 
-规则、模型配置、提示词预设、map/reduce 和发送与 Python 包一致。模型调用使用 OpenAI Responses 流式接口，`User-Agent: yukibot/0.1.0`，不把 temperature 和 `max_output_tokens` 发给接口；它们只参与分批预算和展示。命令根 `/summary`。
+规则、模型配置、提示词预设、map/reduce 和发送沿用关键业务契约。模型调用使用 Responses HTTP/SSE，连续无数据超时，保留调用方取消及流大小限制；`User-Agent: yukibot/0.1.0`，不把 temperature 和 `max_output_tokens` 发给接口。命令根 `/summary`。
 
 ### 8.3 Management
 
@@ -208,7 +208,8 @@ sqlc.yaml
 ## 11. 测试
 
 - 单元测试使用内存仓储和 fake 端口，覆盖内核、路由、任务状态机、命令文案、总结分批和限流。断言对齐 Python 测试锁定的字符串和数量。
-- 集成测试用嵌入式 PostgreSQL 启动真实实例，验证迁移 checksum、漂移回滚、仓储 round-trip 和 `claim_due` 队头阻塞。
+- 集成测试连接 `YUKIBOT_DATABASE_URL` 指定的真实 PostgreSQL 测试库，验证迁移 checksum、漂移回滚、仓储 round-trip 和 `claim_due` 队头阻塞；未提供测试库时跳过，CI 必须提供一次性数据库。
+- 冻结的 Python 基准直接由 Go 测试加载，覆盖关键命令切分、完整提示词、过滤、话题、任务键、引用解析和 Unicode 折叠。
 - gotd 网关的协议映射用 fake API 做契约测试。真实账号测试不进默认 `go test`。
 - `internal/architecture` 用 AST 禁止非法 import。
 

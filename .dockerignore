@@ -9,6 +9,8 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+coverage/
+yukibot
 .env
 .env.*
 !.env.example

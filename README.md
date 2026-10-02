@@ -1,21 +1,23 @@
 # yukibot
 
-yukibot 是一个基于 Python 3.12、Telethon 1.44 和 SQLite 的模块化 Telegram userbot。
+yukibot 是一个基于 Go、gotd/td 和 PostgreSQL 的模块化 Telegram userbot，使用 MTProto 用户账号而非 Bot API。
 当前实现包含：
 
 - 与 Telegram 无关的事件总线、任务监管、生命周期和关闭协调；
 - 不可变 Telegram/数据库契约；
 - 环境配置和 JSON 结构化日志；
-- SQLite 事务、按功能迁移、Forwarder 短期持久任务与崩溃恢复；
-- 可排空的 Telethon event source 和 Forwarder 自有 gateway；
+- PostgreSQL 事务、按功能迁移、Forwarder 短期持久任务与崩溃恢复；
+- 可排空的统一消息队列、gotd event source 和 Forwarder 自有 gateway；
 - 显式组合根与 `yukibot` CLI；
-- 带外管理命令、SQLite 管理员与运行时模块开关；
+- 单一鉴权边界、持久化管理员与运行时模块开关；
 - Forwarder 功能及其框架接入层和路由管理命令；
 - 独立的 Summarizer 功能、结构化模型适配器和总结规则。
 
 整体边界见 [`docs/architecture.md`](docs/architecture.md)，各功能说明见
-[`src/yukibot/features/forwarder/README.md`](src/yukibot/features/forwarder/README.md) 和
-[`src/yukibot/features/summarizer/README.md`](src/yukibot/features/summarizer/README.md)。
+[`docs/features/forwarder.md`](docs/features/forwarder.md) 和
+[`docs/features/summarizer.md`](docs/features/summarizer.md)。
+原 Python 运行时已按模块退役，关键行为基准保留为 Go 测试数据；追溯与兼容性边界见
+[`docs/python-retirement.md`](docs/python-retirement.md)。运行、构建和常规测试不需要 Python。
 
 当前 Go 运行时的统一消息队列、订阅分发和单一鉴权边界见
 [`docs/message-stream.md`](docs/message-stream.md)。实时更新和历史轮询共用入口队列，只有实时控制命令
@@ -25,24 +27,31 @@ yukibot 是一个基于 Python 3.12、Telethon 1.44 和 SQLite 的模块化 Tele
 
 ```bash
 cp .env.example .env
-# 填写 Telegram API ID 和 API hash
-uv sync --frozen
-uv run yukibot
+# 填写 Telegram API ID、API hash，以及可访问的 PostgreSQL 数据库 URL
+# 例如 YUKIBOT_DATABASE_URL=postgres://user:password@localhost:5432/yukibot?sslmode=disable
+# PostgreSQL 必须事先创建好数据库，并授予应用迁移所需权限。
+chmod 600 .env
+mkdir -p data
+chmod 700 data
+go build -o yukibot ./cmd/yukibot
+./yukibot
 ```
 
-首次启动且 session 尚未登录时，Telethon 会执行交互式登录。登录完成后，当前账号可以在任意
+Go 版本以 `go.mod` 为准。首次启动且 gotd session 尚未登录时，会执行交互式登录；不要覆盖旧 Telethon 会话文件，
+两者格式不兼容。登录完成后，当前账号可以在任意
 聊天中发送已注册命令，结果会回复到同一聊天的原消息。命令是普通消息处理之外的带外控制信令，
 不会进入 Forwarder；未注册的 `/xxx` 仍按普通消息处理。
 
 ## Docker 部署
 
 `docker-compose.yml` 默认使用 `ghcr.io/nhirsama/yukibot:latest`，并将其同目录下的 `./data`
-挂载到容器的 `/app/data`。应用不需要开放入站端口，但服务器必须能通过 HTTPS 访问 Telegram、
-GHCR 和配置的模型 API。
+挂载到容器的 `/app/data`。应用不需要开放入站端口，但必须能连接 Telegram、镜像仓库和配置的模型 API。
+当前 Compose 文件不内置 PostgreSQL 服务，必须设置容器内可访问的 `YUKIBOT_DATABASE_URL`；
+不要直接依赖未定义的默认主机 `postgres`。远程数据库的 TLS 参数按实际证书配置。
 
 ```bash
 cp .env.example .env
-# 填写 Telegram API ID 和 API hash
+# 填写 Telegram API ID、API hash 和外部 PostgreSQL URL
 chmod 600 .env
 mkdir -p data
 chmod 700 data
@@ -54,30 +63,25 @@ docker compose up -d
 docker compose logs -f yukibot
 ```
 
-容器启动时只以 root 修正 `./data` 的属主和权限，然后以 UID/GID `10001` 运行应用。
-目录会设为 `0700`，其中的 session、SQLite 和备份文件会设为 `0600`；宿主机上看到这些文件
-属于 UID `10001` 是预期行为。不要在 Compose 中覆盖 `user`，否则入口无法修复新建绑定目录的权限。
+当前 Dockerfile 直接启动 Go 二进制，没有旧 Python 镜像的自动修复目录权限或自动降权入口。
+请限制数据目录访问，并按部署策略配置容器用户；不要假定它会自动切换为 UID `10001`。
 
 升级使用 `docker compose pull && docker compose up -d`。该项目只能运行一个实例；备份时先执行
-`docker compose stop`，完整备份 `./data`，再执行 `docker compose start`。
+`docker compose stop`，备份 PostgreSQL 及 `./data` 内的 gotd 会话，再执行 `docker compose start`。
 
 Forwarder 只在本地保留等待、重试和失败的任务，成功后立即删除任务内的消息文本和元数据。
-升级时数据库迁移会删除旧版本累积的成功任务；SQLite 会复用释放的页，但不会立即缩小宿主机上的文件。
-需要立即回收磁盘空间时，在迁移成功后停服并执行一次：
-
-```bash
-docker compose stop yukibot
-docker compose run --rm --user 10001:10001 --entrypoint python yukibot -c \
-  'import sqlite3; db = sqlite3.connect("/app/data/yukibot.db"); db.execute("VACUUM"); db.close()'
-docker compose start yukibot
-```
+数据库存储维护使用 PostgreSQL 工具，不再在应用容器中执行 Python/SQLite VACUUM。
+旧 SQLite 导入工具 `scripts/import_sqlite.py` 仅供宿主机离线迁移使用，保留它不意味着应用支持 SQLite；
+脚本会清空并重建目标业务表中的数据，运行前必须停机、备份并核对目标库，不应指向未经确认的生产库。
 
 `forwarder_message_links` 只保存源和目标的消息 ID、路由 ID 及实际投递方式，不保存正文或媒体。
 该映射用于同步编辑和删除、保持回复链以及防止重复投递，Telegram 不会为复制转发提供这层映射，
 因此这部分仍需持久化。
+当前应用默认关闭源消息删除到目标消息的同步，源码清理不会改变这一设置。
 
-GitHub Actions 会在每次 push 和 pull request 时执行 Ruff、格式检查、Mypy 和全部测试。默认分支
-通过后发布 `ghcr.io/<owner>/<repository>:latest`，`v*` tag 还会生成对应的版本标签。GHCR 包首次
+GitHub Actions 在 push 和 pull request 时执行 Go vet、竞态测试、PostgreSQL 集成测试、
+冻结的 Python 行为基准、依赖漏洞检查和构建，不安装 Python 或 uv。当前只有 `v*` tag 触发镜像发布，
+同时生成 `latest` 和对应版本标签。GHCR 包首次
 发布后需要在 GitHub Packages 设置中确认服务器所需的可见性；私有包部署前需先执行
 `docker login ghcr.io`。
 
@@ -103,7 +107,7 @@ GitHub Actions 会在每次 push 和 pull request 时执行 Ruff、格式检查�
 ```
 
 当前登录账号和已登记管理员都可以执行全部管理及功能命令，包括增删其他委派管理员。当前登录
-账号本身不能从管理员体系中删除。额外管理员使用稳定的 Telegram user ID 存储在 SQLite 中。
+账号本身不能从管理员体系中删除。额外管理员使用稳定的 Telegram user ID 存储在 PostgreSQL 中。
 管理模块本身始终保持可用，不属于可关闭模块。
 
 Go 运行时按登录账号的稳定 user ID 识别 owner，不依赖消息一定带有 `outgoing` 标志。
@@ -173,7 +177,7 @@ Forwarder 提供：
 间隔支持分钟、小时和天，例如 `5m`、`2h`、`1d`；不带单位的数字按分钟处理。轮询模式不会自动
 加入源频道，只适用于当前账号可以公开读取的频道，因此轮询源不能使用私有邀请链接。首次配置会把
 游标定位到频道当前最新消息，
-只转发之后出现的新消息，不回灌已有历史。游标在消息进入持久任务队列后推进并保存到 SQLite，
+只转发之后出现的新消息，不回灌已有历史。游标在消息进入持久任务队列后推进并保存到 PostgreSQL，
 重启后继续拉取。轮询模式不接收 Telegram 实时更新，因此不会同步已拉取消息之后发生的编辑和删除。
 
 目标不是论坛群时，目标引用不带话题 ID 表示直接发送到该群。显式使用 `copy` 可以始终复制
@@ -245,11 +249,13 @@ Telegram 发送与本地映射落库之间无法建立跨系统事务的限制�
 ## Development
 
 ```bash
-uv sync --dev
-uv run pytest
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy src
+go test -timeout=2m -race ./...
+go vet ./...
+go build ./cmd/yukibot
+
+# 仅使用可清理的一次性 PostgreSQL 测试库
+YUKIBOT_DATABASE_URL='postgres://user:password@localhost:5432/yukibot_test?sslmode=disable' \
+  bash scripts/check-runtime.sh
 ```
 
 ## License
