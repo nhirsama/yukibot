@@ -1,17 +1,12 @@
-//go:build parity
-
-// Package parity compares public Go contracts with a live Python oracle.
-// It deliberately requires Python rather than skipping when the oracle is absent.
+// Package parity compares Go behavior with frozen outputs captured from the
+// original Python implementation before retirement. It does not require Python.
 package parity
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"reflect"
-	"runtime"
 	"strconv"
 	"testing"
 	"time"
@@ -23,6 +18,9 @@ import (
 	"github.com/nhirsama/yukibot/internal/kernel"
 	"github.com/nhirsama/yukibot/internal/textutil"
 )
+
+//go:embed testdata/python312.json
+var pythonBaseline []byte
 
 type messageInput struct {
 	Text, Caption, Kind string
@@ -195,29 +193,16 @@ func evaluate(op string, input json.RawMessage) (any, error) {
 }
 
 func TestPythonParity(t *testing.T) {
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("cannot locate oracle")
-	}
-	python := os.Getenv("YUKIBOT_PARITY_PYTHON")
-	if python == "" {
-		python = "python3"
-	}
-	command := exec.Command(python, filepath.Join(filepath.Dir(filename), "oracle.py"))
-	data, err := command.Output()
-	if err != nil {
-		t.Fatalf("Python oracle is required; run `uv run go test -tags=parity ./tests/parity`: %v", err)
-	}
 	var cases []struct {
 		Name, Op string
 		Input    json.RawMessage
 		Expected map[string]any
 	}
-	if err := json.Unmarshal(data, &cases); err != nil {
+	if err := json.Unmarshal(pythonBaseline, &cases); err != nil {
 		t.Fatal(err)
 	}
-	if len(cases) == 0 {
-		t.Fatal("empty oracle corpus")
+	if len(cases) != 1113 {
+		t.Fatalf("incomplete baseline: got %d cases, want 1113", len(cases))
 	}
 	for _, tc := range cases {
 		t.Run(tc.Name, func(t *testing.T) {
@@ -241,5 +226,5 @@ func TestPythonParity(t *testing.T) {
 			}
 		})
 	}
-	t.Logf("compared %d cases against the retained Python implementation", len(cases))
+	t.Logf("compared %d cases against the frozen Python 3.12 baseline", len(cases))
 }

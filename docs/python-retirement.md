@@ -1,125 +1,57 @@
-# Python 保留与退役验收
+# Python 运行时退役
 
-当前状态：**不满足删除条件，保留原 Python 生产代码、测试及依赖锁文件。**
-100% 语句覆盖率不证明行为等价；跨语言用例通过也不意味着所有模块已经对齐。
-本轮以合并后的 `73779ae` 为基线，不撤销已合并的安全修复或统一鉴权/消息流设计。
+按照最新维护决定，退役不再以 100% 单元覆盖率为门槛。评估依据是实际 Go 运行链路、关键行为对照、现有回归测试和可追踪的模块级 Git 提交。
+这里的目标是移除重复运行时，不借机改变已上线 Go 的权限、消息分发或数据删除策略。
 
-## 本轮本地验证结果
+## 行为证据与追溯
 
-验证环境为 Go 1.27.1、Python 3.12.13、coverage.py 7.16.2、PostgreSQL 18.6 测试库。
-以下为本轮最终覆盖率运行的快照，后台任务的少量分支可能随调度改变；不能用单个子包的 100% 代替整仓结果。
+删除前，已执行原 Python 的 220 项全量测试，并验证 Go 的持久队列、管理命令、路由、摘要及 PostgreSQL 回归测试。
+Python oracle 的 1113 个关键行为对照已冻结为 `tests/parity/testdata/python312.json`，原始提交、源码树和 SHA-256 见同目录 README；正常 `go test ./...` 即执行，无需 Python。
 
-| 实现和测试范围 | 语句覆盖 | 分支覆盖 |
-|---|---:|---:|
-| Go 单元层 | 4481 / 8446 = **53.05%** | 标准 Go profile 不提供 |
-| Go 全量，含集成和跨语言 | 4897 / 8446 = **57.98%** | 标准 Go profile 不提供 |
-| Python 单元 | 3054 / 5397 = **56.59%** | 692 / 1662 = **41.64%** |
-| Python 全量 | 4582 / 5397 = **84.90%** | 1061 / 1662 = **63.84%** |
+对照不是全输入穷尽证明。Telegram 真实账号、媒体兼容性、生产故障恢复和部署环境仍需运行验收，不能从纯函数用例推断都已实测。
+已经发现的两处差异先修复再退役：摘要从总时限改为连续无数据超时；命令空白分隔符与 Python 对齐。上一轮 Unicode 关键词/摘要去重修复一并保留。
 
-Python 排除行数为零。严格的 100% 单元覆盖条件实际执行后返回退出码 1，正确阻止进入删除验收阶段。
-Go 单元尚有 3965 条语句未覆盖；Python 单元尚有 2343 条语句、970 条分支未覆盖。
-本轮没有承诺已经补齐这些缺口，也没有修改覆盖工具来把它们排除。
+## 模块对应关系
 
-- **测试通过**：Python 单元 145 项、全量 220 项；Go 全量记录 1239 个通过的测试/子测试结果，0 失败、0 跳过。其中 1052 个结果来自跨语言父测试及其 1051 个对照子用例，不能称为 1239 个独立业务场景。
-- **对照范围**：1050 个有界业务/文本用例，加 1 个遍历所有合法 Unicode 标量的大小写折叠对照。跨语言不是全模块验收。
-- **稳定性验证**：Python bootstrap 四个测试在覆盖率插桩下连续 10 轮通过；Go forwarder 与共享文本包额外执行 25 轮竞态测试通过。
-- **其他检查**：Go 普通及 parity 标签 `vet`、二进制构建通过；Python `src`、`tests` 及新增工具脚本 Ruff 通过，mypy 检查 74 个源文件通过；生成表再生校验、补丁空白检查通过。
-- **安全扫描**：本地 `govulncheck` 报告 0 个可达漏洞，仍有 1 个未被代码调用的模块级告警，不是所有依赖均无告警。
-- **未通过或未执行的范围**：全仓 `ruff check .` 仍发现已有 `scripts/import_sqlite.py` 的 14 项风格告警，本轮未顺带修改导入工具；未执行真实 Telegram、真实模型 API、容器部署或远程 GitHub Actions。
-
-本轮还修复了 Python bootstrap 测试的固定 100 次毫秒轮询：改为等待更新泵就绪、检查任务异常，并保证失败时关闭运行时。
-转发去重测试等待持久任务队列排空再断言，不再假定 10ms 后处理已经结束。
-Python 生产实现没有修改，仍作为迁移行为参照保留。
-
-### 主要模块缺口
-
-以下 Go 数值把功能包及其 infra/store 合并统计，全部使用相同 profile 分母规则。
-集成测试覆盖的数据库代码，不计入“单元测试已覆盖”的结论。
-
-| Go 模块 | 单元语句覆盖 | 全量语句覆盖 |
-|---|---:|---:|
-| Telegram 适配器 | 30.4% | 30.7% |
-| 数据库适配器 | 16.2% | 64.6% |
-| 转发模块及 infra/store | 50.5% | 55.1% |
-| 管理模块及 store | 81.3% | 86.4% |
-| 摘要模块及 infra/store | 58.5% | 61.1% |
-| 内核 | 77.3% | 77.3% |
-| SQL 存储层 | 0.5% | 45.5% |
-| CLI 入口 | 0.0% | 0.0% |
-
-## 可重复验证
-
-使用 Go `go.mod` 指定的版本、Python 3.12、uv 和一个一次性 PostgreSQL 测试库。
-不要使用生产数据库：现有 Go 数据库测试会清理测试表。建议在干净检出中执行。
-
-```bash
-export YUKIBOT_DATABASE_URL='postgres://USER:PASSWORD@localhost:5432/yukibot_test?sslmode=disable'
-bash scripts/check-parity.sh
-
-# 检验严格的覆盖率先决条件。当前预期返回非零，不会执行任何删除。
-uv run python scripts/coverage_summary.py coverage --require-complete-unit
-
-# 独立运行跨语言对照，缺 Python 或依赖时必须失败，不能静默跳过。
-uv sync --frozen --dev --python 3.12
-uv run go test -count=1 -race -tags=parity ./tests/parity
-```
-
-- **Python 单元测试**：仅 `tests/unit`；分母为整个 `src/yukibot`。
-- **Python 全量测试**：pytest 默认发现的单元、契约、架构和集成测试。不会将其结果冒充单元覆盖率。
-- **Go 单元层测试**：`./internal/... ./cmd/...`，包含包内 fake/harness 测试；覆盖分母使用 `-coverpkg=./...`，包括命令行入口、数据库适配器和生成的 SQL 代码。显式列出 CLI 包，避免未被单元测试导入的入口从 profile 消失。
-- **Go 全量测试**：`-tags=parity ./...`，含 PostgreSQL 集成和 Python 对照测试。标准 Go 工具测量语句覆盖率，不提供本报告所需的分支覆盖率。
-- **没有缩小分母**：Python 关闭默认的排除正则及额外排除，不用 `omit`、`pragma` 或 `TYPE_CHECKING` 排除来获得 100%。生成的 Go 代码不排除。
-- **原始证据**：`coverage/` 包含两套 Python JSON/数据文件与两套 Go profile；CI 上传证据。普通 CI 验证测试及对照通过，不声称已达 100%；手动 CI 输入 `require_complete_unit=true` 才额外执行严格覆盖率条件。
-- **判定方法**：严格条件比较整数分子/分母，而不是四舍五入后的百分比；Python 单元语句与分支都必须覆盖、排除行必须为零。通过仍不授权删除，下面的模块验收和差异审查也必须完成。
-
-Python 原实现只接受 SQLite。脚本仅在 Python 测试子进程中清除 Go 的 PostgreSQL `YUKIBOT_DATABASE_URL`，避免把两个版本的测试环境混在一起；Python 测试自行建立临时 SQLite 数据库。
-
-## 本轮跨语言证据的边界
-
-`tests/parity/oracle.py` 直接调用保留的 Python 实现计算预期值，不是把 Go 输出抄成预期。
-Go 对同一输入比较结果、列表顺序及错误文案。仅规范化 JSON 表示和语言构造/显式 Validate 的区别。
-
-- **转发过滤**：单条与相册、正文/说明优先级、关键词、白黑名单、服务消息及跨条关键词。
-- **来源匹配**：不同聊天、任意话题、General 话题的 None/0/1 表示及普通话题。
-- **引用解析**：选定的数值 ID、公开/私有话题链接及错误链接。不是任意输入的穷尽证明；超大整数、Unicode 数字、百分号编码等边界仍需专门确认。
-- **持久任务构造**：新增、编辑、删除，去重键、内容指纹、UTC 微秒时间、相册延迟、分组、重复 ID 和非法删除事件。
-- **大小写折叠**：另对全部 1,112,064 个 Unicode 标量比较 Python 3.12 的 `str.casefold`；不包括无效 UTF-8、孤立代理项，也不等于任意业务流程均通过。
-
-转发器过去使用 `strings.ToLower`，与 Python `casefold` 不同。本轮改用共享的完整 Unicode 15.0 折叠表，也修复了摘要旧手工表缺失的 `İ → i + 组合点` 映射。
-表由 Python 3.12 生成并固定，避免 Go 升级 Unicode 数据时静默改变迁移基线；`scripts/generate_casefold.py --check` 验证可再生性。
-这里不引入 NFC/NFKC 归一化，`é` 与 `e + 组合重音` 仍按原 Python 行为处理。
-
-## 必须区分的行为差异
-
-| 范围 | 当前结论 | 删除前要求 |
+| 原 Python 模块 | 当前 Go 实现 | 本轮核对重点 |
 |---|---|---|
-| owner / admin 鉴权 | Go 已修复 Saved Messages owner、缺失发送者私聊等问题，并统一命令鉴权；不是逐字复刻旧 bug | 以已批准的新契约验收，不能为了等价撤回修复 |
-| 消息入口 | Go 新增统一有界队列，实时/历史共用；Python 保留原入口 | 验证顺序、背压、停机、重放、失败恢复及不可执行历史命令 |
-| 安全边界 | Go 增加日志脱敏、NaN 拒绝和响应大小限制等 | 记录为有意差异，保持安全回归测试 |
-| 删除同步 | Go `internal/bootstrap/build.go` 显式 `SyncDeletes=false`；Python 默认开启 | **仍待确认**。本轮不改启动默认值，避免突然删除目标消息 |
-| SQLite / PostgreSQL | 换库是架构差异，不能比较 DDL 字节 | 验证导入、约束、事务、恢复和持久状态对应；不能删除仍需使用的导入工具 |
-| Telethon / gotd | 客户端和会话格式不同 | Telegram 真实账号场景与会话切换/回滚验收 |
-| 文档和部署 | README 仍有 Python/SQLite 运维命令 | 完成 Go 运维说明、容器验收和回滚说明后再清理 |
+| `features/summarizer` | `internal/features/summarizer`，含 infra/store | 命令、规则/模型持久化、完整提示词、map/reduce、证据过滤、分块与并发、SSE 请求/失败/超时 |
+| `features/management` | `internal/features/management`，含 store | owner/委派管理员、模块开关、回执作用域、幂等增删 |
+| `features/forwarder` | `internal/features/forwarder`，含 infra/store | 路由、过滤、环检测、相册、回复映射、复制回退、编辑、删除能力、话题、轮询、重建和重试 |
+| `adapters/telegram` | `internal/adapters/telegram` | 消息归一化、身份识别、peer、限流、事件源和回复 |
+| `adapters/database` | `internal/adapters/database`、`internal/storage/dbsql` | PostgreSQL 事务、校验和迁移、回滚、仓储往返、队列恢复 |
+| `adapters/observability` | `internal/observability` | JSON 日志、敏感信息脱敏及并发安全 |
+| `kernel` | `internal/kernel` | 生命周期、事件订阅、任务监管、停机、模块状态、命令分发 |
+| `contracts` | `internal/contracts` | 消息及删除事件校验、集成契约 |
+| `bootstrap/config/__main__` | `internal/bootstrap`、`internal/config`、`cmd/yukibot` | 单一 Go 入口、显式依赖装配、配置和进程生命周期 |
 
-## 尚未完成的模块验收
+## 保留的差异与运行边界
 
-以下不能由当前纯函数对照替代：Telegram 全部消息归一化与 RPC 错误、路由/相册/回复/编辑/删除的端到端状态、持久任务重试与崩溃恢复、历史轮询、成员关系重建、全部命令文案和错误路径、模块生命周期、摘要 map/reduce/分块/模型流、数据库迁移与导入、CLI 与容器部署。
-没有连接真实 Telegram 账号，也没有调用真实模型服务；这些场景仍未完成。
+- **鉴权和消息流**：沿用已合并的 owner/admin 修复、单一命令授权和统一有界消息队列，不恢复旧 Python 的重复鉴权或错误身份判断。
+- **删除同步**：业务服务具备与旧实现相同的同步删除能力，但当前 Go 组合根显式关闭。本次源码清理不启用它，不会因为移除 Python 而开始删除目标消息；是否恢复旧默认仍由维护者决定。
+- **数据库和会话**：运行时只接受 PostgreSQL；gotd session 与 Telethon session 不是同一格式。不得覆盖旧会话或 SQLite 备份，也不能把旧库当成已自动迁移。
+- **媒体复制实现**：Python 下载后重传，Go 使用重新读取源消息获得的 Telegram 文件引用；普通文本和媒体处理路径均存在，但受限媒体/失效引用的外部行为仍需真实账号验收。本次不声称这一差异经过线上对照验证。
+- **模型接口**：Go 直接调用 Responses HTTP/SSE，不再使用 Python SDK；保留流大小限制和取消语义。SDK 自带的 HTTP 重试细节、错误类型/文案与 Go 不保证逐字一致，不影响已经对照的业务提示词，但仍是兼容性边界。
+- **交付语义**：进程内入口队列不是持久消息中间件；发送成功但映射未落库的崩溃窗口仍可能重发。清理旧实现不会解决或扩大这些已有边界。
 
-删除 Python 必须是后续独立、可审查的变更：补齐单元测试并达到严格覆盖率条件，完成模块级对照及故障注入，明确批准必要差异，保留历史参照版本/回滚路径，移除 Python 运行入口及 CI 依赖时同步替换 oracle。
-本轮不执行删除、不自动合并，也不把“当前对照通过”写成“完全一致”。
+## 独立保留的数据导入工具
 
-## 增量补丁交付
+`scripts/import_sqlite.py` 仅依赖 Python 标准库和宿主机 `psql`，不导入 `yukibot`、Telethon、Pydantic 或 OpenAI SDK。
+它是旧 SQLite 数据的一次性离线导入工具，不是第二套运行时，不被 Go 构建、启动、正常测试或容器调用。
 
-本轮本地分支为 `test/python-go-parity-20261001`。补丁只包含相对 `73779ae` 的新增修改，不包含已合并的前三轮累计补丁。
-GitHub 写入认证检查仍返回 `GITHUB_APP_CREDENTIAL_UNAVAILABLE`，因此本轮没有推送、创建 PR 或合并。
+保留此工具是为了避免删除运行时的同时切断数据迁移路径。导入会写目标 PostgreSQL，因此不在此次清理中自动执行；使用前必须停机、备份，并审查目标库和脚本校验条件。
+旧数据已经完成迁移的部署无需安装 Python。
 
-在干净工作区保存当前工作后，可用以下方式建立待审查分支：
+## 验证与回滚
 
 ```bash
-git switch -c test/python-go-parity
-git am /path/to/yukibot-python-parity.patch
+# 默认运行 Go 测试及冻结基准，不访问真实 Telegram
+go test -timeout=2m -race ./...
+
+# 完整验证，只能指向可清理的一次性 PostgreSQL 测试库
+export YUKIBOT_DATABASE_URL='postgres://USER:PASSWORD@localhost:5432/yukibot_test?sslmode=disable'
+bash scripts/check-runtime.sh
 ```
 
-请先运行测试并审查删除同步等未决差异，再通过 PR 审查本轮修改。
-此次补丁保留所有原始 Python 生产代码，不含任何源码或生产数据删除操作。
+模块移除使用独立提交。需要恢复源码时，从退役前提交 `e7f7d36` 建立独立历史工作区，而不是在当前 Go 分支重新启用残缺的 Python 模块。
+Go 数据库变更和 Telegram 会话不应随 Git 回退自动覆盖；生产回滚仍需对应的备份和版本方案。
