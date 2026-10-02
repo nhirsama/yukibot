@@ -40,6 +40,27 @@ func TestFilterIsCaseInsensitiveAndBlacklistWins(t *testing.T) {
 	}
 }
 
+func TestFilterUnicodeCasefold(t *testing.T) {
+	for _, tc := range []struct{ text, keyword string }{
+		{"Straße", "STRASSE"}, {"STRASSE", "Straße"},
+		{"ΟΣ", "ος"}, {"İstanbul", "i\u0307stanbul"},
+		{"ﬃ", "ffi"}, {"µ", "μ"},
+	} {
+		t.Run(tc.text+"/"+tc.keyword, func(t *testing.T) {
+			t.Parallel()
+			filter := NewMessageFilter([]string{tc.keyword}, nil, nil, false)
+			message := textMessage(10, tc.text)
+			if !filter.Allows(message) || !filter.AllowsAlbum([]IncomingMessage{message}) {
+				t.Fatal("full Unicode casefold must match both single messages and albums")
+			}
+		})
+	}
+	filter := NewMessageFilter([]string{"é"}, nil, nil, false)
+	if filter.Allows(textMessage(10, "e\u0301")) {
+		t.Fatal("casefold must not silently introduce Unicode normalization")
+	}
+}
+
 func TestServiceMessagesAreOptIn(t *testing.T) {
 	event := textMessage(10, "")
 	event.ContentType = contracts.ContentService

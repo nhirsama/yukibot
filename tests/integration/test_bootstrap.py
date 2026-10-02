@@ -1,6 +1,8 @@
 import asyncio
 from datetime import UTC, datetime
 
+import pytest
+
 from tests.contract.adapters.telegram.conftest import (
     FakeDialog,
     FakeMessage,
@@ -37,8 +39,60 @@ class DeleteEvent:
     pass
 
 
+@pytest.fixture
+async def start_runtime():
+    """Always stop background runtimes, including on assertion/startup failure."""
+    running = []
+
+    async def start(runtime, client):
+        task = asyncio.create_task(runtime.application.run(install_signal_handlers=False))
+        running.append((runtime, task))
+        ready = asyncio.create_task(client.update_pump_started.wait())
+        try:
+            done, _ = await asyncio.wait(
+                (task, ready), timeout=5, return_when=asyncio.FIRST_COMPLETED
+            )
+            if task in done:
+                await task  # Surface startup errors rather than a misleading timeout.
+                pytest.fail("runtime stopped before the test requested shutdown")
+            assert ready in done, "Telegram update pump did not become ready"
+        finally:
+            ready.cancel()
+            await asyncio.gather(ready, return_exceptions=True)
+        return task
+
+    yield start
+    for runtime, task in reversed(running):
+        runtime.application.request_shutdown("test cleanup")
+        await asyncio.wait_for(task, timeout=5)
+
+
+async def wait_for_delivery(client, task):
+    # A wall-clock timeout is only a failure bound, not an assumed startup speed.
+    async with asyncio.timeout(5):
+        while not client.calls:
+            if task.done():
+                await task
+                pytest.fail("runtime stopped before delivery")
+            await asyncio.sleep(0.001)
+
+
+async def wait_for_empty_queue(runtime, task):
+    async with asyncio.timeout(5):
+        while True:
+            row = await runtime.database.fetch_one("SELECT COUNT(*) AS n FROM forwarder_jobs")
+            assert row is not None
+            if row["n"] == 0:
+                return
+            if task.done():
+                await task
+                pytest.fail("runtime stopped before draining durable jobs")
+            await asyncio.sleep(0.001)
+
+
 async def test_composed_runtime_starts_and_stops_all_resources(
     tmp_path,
+    start_runtime,
     monkeypatch,  # type: ignore[no-untyped-def]
 ) -> None:
     monkeypatch.setattr(
@@ -55,8 +109,7 @@ async def test_composed_runtime_starts_and_stops_all_resources(
     client = FakeNativeClient()
     runtime = build_runtime(settings, native_client=client)  # type: ignore[arg-type]
 
-    task = asyncio.create_task(runtime.application.run(install_signal_handlers=False))
-    await asyncio.wait_for(client.update_pump_started.wait(), timeout=1)
+    task = await start_runtime(runtime, client)
     assert client.connected
     assert client.update_pump_calls == 1
     assert runtime.application.lifecycle.started_features == (
@@ -69,7 +122,7 @@ async def test_composed_runtime_starts_and_stops_all_resources(
     )
 
     runtime.application.request_shutdown("test")
-    await asyncio.wait_for(task, timeout=1)
+    await asyncio.wait_for(task, timeout=5)
 
     assert client.disconnected
     assert client.update_pump_stopped.is_set()
@@ -80,6 +133,7 @@ async def test_composed_runtime_starts_and_stops_all_resources(
 
 async def test_composed_runtime_persists_and_deduplicates_forwarding(
     tmp_path,
+    start_runtime,
     monkeypatch,  # type: ignore[no-untyped-def]
 ) -> None:
     monkeypatch.setattr(
@@ -98,11 +152,7 @@ async def test_composed_runtime_persists_and_deduplicates_forwarding(
     client.dialogs.extend((FakeDialog(source), FakeDialog(destination)))
     client.messages[(-1001, 10)] = FakeMessage(10, source)
     runtime = build_runtime(settings, native_client=client)  # type: ignore[arg-type]
-    running = asyncio.create_task(runtime.application.run(install_signal_handlers=False))
-    for _ in range(100):
-        if len(runtime.application.lifecycle.started_features) == 6:
-            break
-        await asyncio.sleep(0.001)
+    running = await start_runtime(runtime, client)
 
     routes = SqliteRouteRepository(runtime.database)
     await routes.add(Route(1, SourceEndpoint(-1001), DestinationEndpoint(-2001)))
@@ -115,22 +165,21 @@ async def test_composed_runtime_persists_and_deduplicates_forwarding(
         )
     )
     await runtime.bus.publish(event)
-    for _ in range(100):
-        if client.calls:
-            break
-        await asyncio.sleep(0.001)
+    await wait_for_delivery(client, running)
+    await wait_for_empty_queue(runtime, running)
     assert len(client.calls) == 1
 
     await runtime.bus.publish(event)
-    await asyncio.sleep(0.01)
+    await wait_for_empty_queue(runtime, running)
     assert len(client.calls) == 1
 
     runtime.application.request_shutdown("test")
-    await asyncio.wait_for(running, timeout=1)
+    await asyncio.wait_for(running, timeout=5)
 
 
 async def test_recovered_jobs_run_only_after_telegram_is_ready(
     tmp_path,
+    start_runtime,
     monkeypatch,  # type: ignore[no-untyped-def]
 ) -> None:
     monkeypatch.setattr(
@@ -169,19 +218,17 @@ async def test_recovered_jobs_run_only_after_telegram_is_ready(
         ),
         native_client=client,  # type: ignore[arg-type]
     )
-    running = asyncio.create_task(runtime.application.run(install_signal_handlers=False))
-    for _ in range(100):
-        if client.calls:
-            break
-        await asyncio.sleep(0.001)
+    running = await start_runtime(runtime, client)
+    await wait_for_delivery(client, running)
 
     assert len(client.calls) == 1
     runtime.application.request_shutdown("test")
-    await asyncio.wait_for(running, timeout=1)
+    await asyncio.wait_for(running, timeout=5)
 
 
 async def test_runtime_control_plane_manages_modules_admins_and_routes(
     tmp_path,
+    start_runtime,
     monkeypatch,  # type: ignore[no-untyped-def]
 ) -> None:
     monkeypatch.setattr(
@@ -203,11 +250,7 @@ async def test_runtime_control_plane_manages_modules_admins_and_routes(
         ordinary_messages.append(event)
 
     runtime.bus.subscribe(TelegramMessageReceived, record_ordinary)
-    running = asyncio.create_task(runtime.application.run(install_signal_handlers=False))
-    for _ in range(100):
-        if len(runtime.application.lifecycle.started_features) == 6:
-            break
-        await asyncio.sleep(0.001)
+    running = await start_runtime(runtime, client)
 
     chat = FakePeer(-4321, "control chat")
     owner = client.me
@@ -394,4 +437,4 @@ async def test_runtime_control_plane_manages_modules_admins_and_routes(
     assert ordinary_messages[-1].message.text == "/unknown value"
 
     runtime.application.request_shutdown("test")
-    await asyncio.wait_for(running, timeout=1)
+    await asyncio.wait_for(running, timeout=5)

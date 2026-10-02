@@ -15,6 +15,23 @@ import (
 	"github.com/nhirsama/yukibot/internal/contracts"
 )
 
+func TestSummaryTitleDeduplicationUsesPythonCasefold(t *testing.T) {
+	topics := []SummaryTopic{
+		{Title: "İstanbul", Summary: "first", EvidenceMessageIDs: []int{10}},
+		{Title: "i\u0307stanbul", Summary: "duplicate", EvidenceMessageIDs: []int{10}},
+		{Title: "Straße", Summary: "second", EvidenceMessageIDs: []int{10}},
+		{Title: "STRASSE", Summary: "duplicate", EvidenceMessageIDs: []int{10}},
+	}
+	document := SummaryDocument{Topics: topics}
+	grounded := groundDocument(document, map[int]struct{}{10: {}}, 12)
+	merged := mergeDocuments([]SummaryDocument{document}, 12)
+	for _, got := range []SummaryDocument{grounded, merged} {
+		if len(got.Topics) != 2 || got.Topics[0].Title != "İstanbul" || got.Topics[1].Title != "Straße" {
+			t.Fatalf("unexpected deduplication: %+v", got)
+		}
+	}
+}
+
 func TestOversizedSingleMessageIsSplitWithoutLosingText(t *testing.T) {
 	original := strings.Repeat("中", 10000)
 	batches, err := messageBatches([]SummaryMessage{testMessage(10, original, 0, 7, "Alice", false)}, 32768, 4096, "")

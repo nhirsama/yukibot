@@ -8,6 +8,11 @@ on:
       - "v*"
   pull_request:
   workflow_dispatch:
+    inputs:
+      require_complete_unit:
+        description: Enforce exact 100% unit coverage (does not authorize Python removal)
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -47,10 +52,27 @@ jobs:
       - name: Run vet
         run: go vet ./...
 
-      - name: Run tests
+      - name: Set up Python oracle
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      - name: Run both implementations, differential tests and coverage
         env:
           YUKIBOT_DATABASE_URL: postgres://yukibot:yukibot-ci@localhost:5432/yukibot_test?sslmode=disable
-        run: go test -race ./...
+        run: bash scripts/check-parity.sh
+
+      - name: Enforce retirement coverage prerequisite when requested
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.require_complete_unit }}
+        run: uv run python scripts/coverage_summary.py coverage --require-complete-unit
+
+      - name: Upload coverage evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-go-coverage
+          path: coverage/
+          if-no-files-found: error
 
       - name: Check reachable dependency vulnerabilities
         run: |

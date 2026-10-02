@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/nhirsama/yukibot/internal/contracts"
+	"github.com/nhirsama/yukibot/internal/textutil"
 )
 
 // ContentType is the normalized Telegram message kind.
@@ -273,9 +274,11 @@ func (f MessageFilter) allows(message IncomingMessage, checkKeywords bool) bool 
 		return false
 	}
 	if checkKeywords && len(f.Keywords) > 0 {
-		text := strings.ToLower(message.SearchableText())
+		// Full Unicode folding matches Python str.casefold, unlike ToLower
+		// (for example Straße/STRASSE, final sigma and ligatures).
+		text := textutil.Casefold(message.SearchableText())
 		for _, keyword := range f.Keywords {
-			if strings.Contains(text, strings.ToLower(keyword)) {
+			if strings.Contains(text, textutil.Casefold(keyword)) {
 				return true
 			}
 		}
@@ -301,9 +304,9 @@ func (f MessageFilter) AllowsAlbum(messages []IncomingMessage) bool {
 	for i, message := range messages {
 		parts[i] = message.SearchableText()
 	}
-	text := strings.ToLower(strings.Join(parts, "\n"))
+	text := textutil.Casefold(strings.Join(parts, "\n"))
 	for _, keyword := range f.Keywords {
-		if strings.Contains(text, strings.ToLower(keyword)) {
+		if strings.Contains(text, textutil.Casefold(keyword)) {
 			return true
 		}
 	}

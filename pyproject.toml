@@ -28,6 +28,7 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
+    "coverage==7.16.2",
     "mypy>=1.17.0",
     "pytest>=8.4.1",
     "pytest-asyncio>=1.1.0",
@@ -45,6 +46,17 @@ addopts = "-q"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.coverage.run]
+branch = true
+source = ["src/yukibot"]
+
+[tool.coverage.report]
+# Keep the retirement denominator explicit: no implicit ellipsis/TYPE_CHECKING
+# or pragma exclusions. Coverage is evidence, not permission to delete Python.
+exclude_lines = []
+exclude_also = []
+partial_branches = []
 
 [tool.ruff]
 target-version = "py312"
