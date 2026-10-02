@@ -3,6 +3,7 @@ package forwarder
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -71,6 +72,70 @@ func TestNativeForwardCanFallBackToCopy(t *testing.T) {
 	link, ok, err := links.Get(context.Background(), 1, MessageRef{ChatID: -1001, MessageID: 10})
 	if err != nil || !ok || link.DeliveryMode != ForwardModeCopy {
 		t.Fatalf("link %#v ok %v err %v", link, ok, err)
+	}
+}
+
+func TestConcurrentDuplicateIsDeliveredOnce(t *testing.T) {
+	routes := mustRoutes(mustRoute(1, mustSource(-1001, SourceConfig{}), mustDestination(-2001, DestinationConfig{})))
+	gateway := newFakeGateway()
+	service := NewForwarderService(routes, NewInMemoryMessageLinkRepository(nil), gateway, ForwarderOptions{}, nil)
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			report, err := service.ForwardMessage(context.Background(), textMessage(10, "same"))
+			if err != nil || len(report.Failures) != 0 {
+				t.Errorf("duplicate processing: %+v %v", report, err)
+			}
+		}()
+	}
+	close(start)
+	workers.Wait()
+	if len(gateway.calls) != 1 {
+		t.Fatalf("delivered %d times", len(gateway.calls))
+	}
+}
+
+func TestAlbumFallbackPersistsCopyMode(t *testing.T) {
+	routes := mustRoutes(mustRoute(1, mustSource(-1001, SourceConfig{}), mustDestination(-2001, DestinationConfig{})))
+	gateway := newFakeGateway()
+	gateway.rejectNative = true
+	links := NewInMemoryMessageLinkRepository(nil)
+	service := NewForwarderService(routes, links, gateway, ForwarderOptions{}, nil)
+	album := []IncomingMessage{photo(10), photo(11)}
+	report, err := service.ForwardAlbum(context.Background(), album)
+	if err != nil || report.DeliveredMessages() != 2 {
+		t.Fatalf("album fallback: %+v %v", report, err)
+	}
+	for _, item := range album {
+		link, ok, err := links.Get(context.Background(), 1, item.Ref)
+		if err != nil || !ok || link.DeliveryMode != ForwardModeCopy {
+			t.Fatalf("copy mode was not persisted: %+v %t %v", link, ok, err)
+		}
+	}
+	replay, err := service.ForwardAlbum(context.Background(), album)
+	if err != nil || replay.DeduplicatedMessages() != 2 || len(gateway.calls) != 2 {
+		t.Fatalf("replay resent album: %+v %v calls=%d", replay, err, len(gateway.calls))
+	}
+}
+
+func TestAmbiguousDeleteRequiresExplicitOptIn(t *testing.T) {
+	link, err := NewMessageLink(1, MessageRef{ChatID: -1001, MessageID: 10}, MessageRef{ChatID: -2001, MessageID: 100}, ForwardModeCopy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := mustRoutes()
+	links := NewInMemoryMessageLinkRepository([]MessageLink{link})
+	gateway := newFakeGateway()
+	service := NewForwarderService(routes, links, gateway, ForwarderOptions{AllowAmbiguousDeletes: true}, nil)
+	report, err := service.SynchronizeDelete(context.Background(), MessagesDeleted{
+		MessageIDs: []int{10}, OccurredAt: time.Unix(100, 0).UTC(),
+	})
+	if err != nil || report.Synchronized != 1 || len(gateway.deletes) != 1 {
+		t.Fatalf("explicit ambiguous delete: %+v %v", report, err)
 	}
 }
 
