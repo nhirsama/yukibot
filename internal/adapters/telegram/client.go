@@ -12,6 +12,7 @@ import (
 	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/telegram/peers"
 	"github.com/gotd/td/tg"
+	"github.com/nhirsama/yukibot/internal/version"
 	"go.uber.org/zap"
 )
 
@@ -125,7 +126,11 @@ func (c *Client) Start(ctx context.Context) error {
 	raw := telegram.NewClient(c.apiID, c.apiHash, telegram.Options{
 		SessionStorage: &session.FileStorage{Path: c.sessionPath},
 		UpdateHandler:  c,
-		Logger:         zap.NewNop(),
+		Device: telegram.DeviceConfig{
+			DeviceModel: "yukibot",
+			AppVersion:  version.Version,
+		},
+		Logger: zap.NewNop(),
 	})
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	ready := make(chan error, 1)

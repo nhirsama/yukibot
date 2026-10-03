@@ -9,12 +9,13 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
+ARG VERSION=dev
 ARG TARGETOS
 ARG TARGETARCH
 ARG TARGETVARIANT
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=${TARGETVARIANT#v} go build \
     -trimpath \
-    -ldflags="-s -w" \
+    -ldflags="-s -w -X github.com/nhirsama/yukibot/internal/version.Version=${VERSION}" \
     -o /out/yukibot \
     ./cmd/yukibot
 

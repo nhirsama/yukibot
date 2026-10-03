@@ -37,6 +37,8 @@ go build -o yukibot ./cmd/yukibot
 ./yukibot
 ```
 
+GitHub Actions 发布时会自动读取 Git tag 并将版本写入程序；普通本地构建默认使用 `dev`。
+Docker 发布构建也会将 release tag 注入程序。Telegram 客户端会显示为 `yukibot` 加对应版本。
 Go 版本以 `go.mod` 为准。首次启动且 gotd session 尚未登录时，会执行交互式登录；不要覆盖旧 Telethon 会话文件，
 两者格式不兼容。登录完成后，当前账号可以在任意
 聊天中发送已注册命令，结果会回复到同一聊天的原消息。命令是普通消息处理之外的带外控制信令，
